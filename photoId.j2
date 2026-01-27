@@ -1,0 +1,26 @@
+Professional ID-style headshot, {{ metadata.head_yaw }}, {{ metadata.head_tilt }}, {{ metadata.shoulders }}, perfectly centered composition.
+A {{ gender }} of {{ ancestry }}, approximately {{ age }} years old. Skin tone: {{ skin.tone }}.
+
+Face shape: {{ face.shape }}. Jawline: {{ face.jaw }}. Brows: {{ face.brow }}.
+Eyes are {{ eyes.color }} and {{ eyes.shape }}. Nose has a {{ face.nose }}. Mouth is {{ face.mouth }}. Ears are {{ face.ear }}.
+Skin texture: {{ skin.texture }}; age-related detail: {{ skin.aging_note }}.
+
+Hair is {{ hair.color }} styled as {{ hair.style }} (hair texture: {{ hair.texture }}){% if hair.gray_desc %}, {{ hair.gray_desc }}{% endif %}, {{ metadata.grooming }}.
+{%- if hair.baldness_note %} Hair shows {{ hair.baldness_note }}.{% endif -%}
+{%- if hair.stray_hair %} {{ hair.stray_hair }}.{% endif -%}
+{%- if hair.facial_hair %} Facial hair: {{ hair.facial_hair }}.{% endif -%}
+{%- if gender == "woman" %} Makeup: {{ metadata.makeup }}.{% endif -%}
+{%- if metadata.jewelry %} Jewelry: {{ metadata.jewelry }}.{% endif -%}
+{%- if metadata.glasses %} Wearing {{ metadata.glasses }}{% if metadata.glare %} {{ metadata.glare }}{% endif %}.{% endif -%}
+{%- if metadata.hat %} Wearing {{ metadata.hat }}.{% endif -%}
+{%- if metadata.extra_headwear %} Additional headwear: {{ metadata.extra_headwear }}.{% endif -%}
+{%- if metadata.body_detail %} Additional detail: {{ metadata.body_detail }}.{% endif %}
+
+They are wearing a {{ clothing.condition }} {{ clothing.outfit }} in {{ clothing.intensity }} {{ clothing.color }},
+{{ clothing.fit }}, with {{ clothing.fabric }}.
+{%- if clothing.layer %} Additional clothing detail: {{ clothing.layer }}.{% endif %}
+
+Expression is {{ metadata.expression }}, looking directly into the camera.
+
+{{ metadata.lighting }}.
+Captured with a {{ metadata.lens }} portrait lens. {{ metadata.quality_profile }}{% if metadata.motion_hint %}, {{ metadata.motion_hint }}{% endif %}.
