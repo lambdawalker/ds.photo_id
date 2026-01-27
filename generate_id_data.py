@@ -24,7 +24,7 @@ def analyze_id_photos(input_folder, output_folder):
         "Generate a fictional person ID in this format:"
     )
 
-    with open("id_data_sample.json") as f:
+    with open("res/id_data_sample.json") as f:
         user_instruction += f"\n\n{f.read()}"
 
     valid_extensions = ('.jpg', '.jpeg', '.png', '.webp')

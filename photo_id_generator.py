@@ -12,7 +12,7 @@ PREFIX = "photoId"
 
 
 def load_template_environment():
-    base_dir = os.path.dirname(os.path.abspath(__file__))
+    base_dir = "./res"
     return Environment(loader=FileSystemLoader(base_dir))
 
 
@@ -46,7 +46,7 @@ def process_sample(index, age):
             return index, True, "skipped"
 
         api = ComfyApiWrapper("http://127.0.0.1:8188/")
-        wf = ComfyWorkflowWrapper("flux1_api.json")
+        wf = ComfyWorkflowWrapper("./res/flux1_api.json")
         template_env = load_template_environment()
 
         prompt = render_prompt(age, template_env)
