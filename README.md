@@ -1,85 +1,70 @@
----
-license: cc-by-4.0  
-task_categories:
-- text-to-image  
-- image-to-text  
-- object-detection  
-language:  
-- en  
-tags:  
-- photography  
-- headshot  
-- flux  
-- gemma  
-- synthetic  
-- metadata  
-- json  
-- structured-data
----
-# **Photo ID Dataset**
+# Photo ID Dataset Generator
 
-## **Overview**
+This repository contains a suite of tools designed to generate a high-quality, synthetic Photo ID dataset. It leverages AI models for image generation (Flux 1 via ComfyUI) and metadata generation (Gemma 3 via LM Studio) to create realistic ID-style headshots paired with dense natural language descriptions and structured JSON identity profiles.
 
-The **Photo ID Dataset** is a high-quality collection of 2,000 synthetic PNG images depicting individuals in a professional ID-style headshot format. This dataset is designed to bridge the gap between high-fidelity image generation, vision-language understanding, and structured data extraction.
+## Overview
 
-Each image was generated using **Flux 1** for realistic human features and subsequently processed by **Gemma 3 12B** to provide both rich natural language descriptions and structured JSON metadata containing fictional identity profiles.
+The project automates the entire pipeline of dataset creation:
+1.  **Image Generation**: Uses Flux 1 to generate consistent, high-quality professional headshots.
+2.  **Visual Description**: Employs Gemma 3 4B to generate "respectful and assertive" dense descriptions of each image.
+3.  **Identity Synthesis**: Uses Gemma 3 4B to create detailed fictional personal data (names, DOB, addresses, physical traits) matching the generated images.
+4.  **Dataset Compilation**: Packages the images and metadata into a Hugging Face compatible format and uploads it to the Hub.
 
-## **Dataset Structure**
+## Project Structure
 
-Each entry in the dataset contains:
+```text
+.
+├── res/                    # Resources (workflows, templates, schemas)
+│   ├── flux1_api.json      # ComfyUI workflow for Flux 1
+│   ├── photoId.j2          # Jinja2 template for prompts
+│   └── id_data_sample.json # Sample schema for JSON profiles
+├── photo_id_generator.py   # Script to generate images via ComfyUI
+├── generate_descriptions.py # Script to generate text descriptions via LM Studio
+├── generate_id_data.py     # Script to generate JSON profiles via LM Studio
+├── validate_id_data_schema.py # Validation tool for generated JSON
+└── publish_data_set.py     # Compiler and uploader for Hugging Face
+```
 
-* **image**: The 512x512 PNG headshot.  
-* **prompt**: The original text prompt used to generate the image.  
-* **description**: A dense, assertive description of the person's visual traits.  
-* **file\_id**: Unique identifier for the entry.  
-* **person\_metadata**: A structured JSON object containing a fictional identity.
+## Prerequisites
 
-### **Metadata Schema**
+- **ComfyUI**: Required for image generation. Must be running with the Flux 1 model available.
+- **LM Studio**: Required for description and JSON profile generation. Recommended model: `google/gemma-3-4b`.
+- **Python 3.10+**: With required dependencies (see scripts for specific imports like `datasets`, `huggingface_hub`, `rich`, `jinja2`).
 
-The person\_metadata field includes:
+## Usage
 
-* **Identification**: First name, last name, DOB, age, gender, ethnicity.  
-* **Contact Info**: Fictional address, email, and phone number.  
-* **Biometric Details**: Eye color, height (cm), weight (kg), and blood type.  
-* **Metadata**: Occupation, citizenship status, and document issue date.
+### 1. Generate Images
+Ensure ComfyUI is running at `http://127.0.0.1:8188/`.
+```bash
+python photo_id_generator.py
+```
+This will generate images based on the templates in `res/` and save them to the `output` directory (which you should then move to `dataset/idPhoto/img`).
 
-## **Usage**
+### 2. Generate Descriptions
+Ensure LM Studio is running a local server with Gemma 3.
+```bash
+python generate_descriptions.py --input ./dataset/idPhoto/img --description ./dataset/idPhoto/description
+```
 
-You can load this dataset using the Hugging Face datasets library:
+### 3. Generate Identity Profiles (JSON)
+```bash
+python generate_id_data.py --input ./dataset/idPhoto/img --output ./dataset/idPhoto/json_profiles
+```
 
-from datasets import load\_dataset
+### 4. Validate Profiles
+```bash
+python validate_id_data_schema.py --path ./dataset/idPhoto/json_profiles
+```
 
-\# Load the dataset  
-dataset \= load\_dataset("lambdaWalker/photo\_id")
+### 5. Publish to Hugging Face
+```bash
+python publish_data_set.py --path ./dataset/idPhoto --user your_username --dataset_name your_dataset_name
+```
 
-\# Access a sample from the 'body' split  
-example \= dataset\['body'\]\[0\]
+## Dataset Details
 
-\# Display Image  
-example\['image'\].show()
+For detailed information about the dataset structure, schema, and license, please refer to https://huggingface.co/datasets/lambdaWalker/ds.photo_id
 
-\# Print Structured Metadata  
-meta \= example\['person\_metadata'\]  
-print(f"Name: {meta\['identification'\]\['first\_name'\]} {meta\['identification'\]\['last\_name'\]}")  
-print(f"Occupation: {meta\['metadata'\]\['occupation'\]}")  
-print(f"Bio: {meta\['biometric\_details'\]\['height\_cm'\]}cm, {meta\['biometric\_details'\]\['weight\_kg'\]}kg")
+## License
 
-\# Print Descriptions  
-print(f"Description: {example\['description'\]}")
-
-## **Dataset Details**
-
-* **Total Images:** 2,000  
-* **Format:** PNG (512x512 pixels)  
-* **Content:** Synthetic headshots of diverse individuals (varying gender, descent, age, and style).  
-* **Generation Stack:** \* **Image Gen:** Flux 1  
-  * **Vision/Logic:** Gemma 3 12B  
-* **Synthetic Nature:** All identities, addresses, and personal details are entirely fictional and AI-generated.
-
-## **License**
-
-This dataset is licensed under the **Creative Commons Attribution 4.0 International (CC BY 4.0)** license.
-
-Attribution:  
-LambdaWarker@isdavid.com  
-You are free to share and adapt this material for any purpose, even commercially, provided you give appropriate credit.
+This project code is provided as-is. The generated dataset is typically licensed under CC-BY-4.0 (check the dataset sub-README for specifics).

@@ -59,7 +59,7 @@ def compile_photo_id_dataset(data_path: str) -> Dataset:
     img_dir = os.path.join(data_path, "img")
     prompt_dir = os.path.join(data_path, "prompt")
     desc_dir = os.path.join(data_path, "description")
-    json_dir = os.path.join(data_path, "json_profiles")  # Added new folder path
+    json_dir = os.path.join(data_path, "json_profiles")
 
     # Validate directories exist
     required_dirs = [img_dir, prompt_dir, desc_dir, json_dir]
@@ -89,8 +89,7 @@ def compile_photo_id_dataset(data_path: str) -> Dataset:
                     with open(desc_path, "r", encoding="utf-8") as f:
                         desc_text = f.read().strip()
                     with open(json_path, "r", encoding="utf-8") as f:
-                        profile_data = json.load(f)
-                        profile_info = profile_data
+                        profile_info = json.load(f)
 
                     yield {
                         "image": img_path,
@@ -121,7 +120,7 @@ def upload_readme(repo_id: str, readme_path: str, token: str = None):
     try:
         api.upload_file(
             path_or_fileobj=readme_path,
-            path_in_repo="README.md",
+            path_in_repo="dataset/idPhoto/README.md",
             repo_id=repo_id,
             repo_type="dataset",
             commit_message="Update Dataset Card (README)"
@@ -135,12 +134,12 @@ def main():
     parser = argparse.ArgumentParser(description="Compile and upload a Photo ID dataset to Hugging Face.")
 
     # Dataset arguments
-    parser.add_argument("--path", type=str, default="../raw_data", help="Path to the root data directory containing img, prompt, and description folders.")
+    parser.add_argument("--path", type=str, default="./dataset/idPhoto", help="Path to the root data directory containing img, prompt, and description folders.")
     parser.add_argument("--user", type=str, default="lambdaWalker", help="Hugging Face username or organization.")
     parser.add_argument("--dataset_name", type=str, default="ds.photo_id", help="Name of the dataset repository.")
 
     # Readme arguments
-    parser.add_argument("--readme_path", type=str, default="../README.md", help="Path to a local README.md file to upload.")
+    parser.add_argument("--readme_path", type=str, default="./dataset/idPhoto/README.md", help="Path to a local README.md file to upload.")
 
     # Auth/Config arguments
     parser.add_argument("--token", type=str, default=None, help="Hugging Face API token (optional if logged in via CLI).")
