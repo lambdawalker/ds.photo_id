@@ -41,6 +41,17 @@ Original generation and background removal run sequentially in the image worker 
 
 Validate a small batch before launching all 10,000: inspect transparency on light and dark backgrounds, especially around hair, glasses, and clothing. The automated checks verify PNG headers, RGBA output and matching dimensions; they do not judge mask quality.
 
+## Drag-and-drop ComfyUI diagnostics
+
+These are **UI workflows**, unlike the `*_api.json` graphs submitted by the Python client. Drag either file onto the ComfyUI canvas:
+
+- [`res/check_photo_pipeline_ui.json`](res/check_photo_pipeline_ui.json): full Qwen 2.1 generation, original PNG saving, BiRefNet removal, and transparent PNG saving. A fixed sample prompt generates one 512×512 portrait in 20 steps.
+- [`res/check_birefnet_ui.json`](res/check_birefnet_ui.json): background removal only. Upload an existing portrait in `LoadImage`, select the BiRefNet weights, and run.
+
+All nodes are expanded so missing node types are visible on import. If a node is available but its weights are missing, select an installed model in its loader; pressing **Run** validates the selections and tests execution. Pay particular attention to `TextEncodeQwenImage21`, `QwenImage21Cache`, `LoadBackgroundRemovalModel`, and `RemoveBackground`.
+
+Both workflows save test outputs under `ComfyUI/output/diagnostics/`. They do not modify the generator's dataset or saved session. Their JSON connections have been checked offline; execution still needs verification on your ComfyUI server.
+
 ## Generation dashboard
 
 The launchers open a Textual dashboard with separate prompt and image panels. Each panel shows progress, its current job and a scrolling activity log. Panels stack on narrower terminals. The LLM worker prepares prompts while the ComfyUI worker renders the previous completed prompt. Blocking HTTP requests run on separate threads, leaving the UI responsive. Only one image is submitted at a time.
