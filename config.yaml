@@ -5,7 +5,8 @@ comfyui:
 llm:
   enabled: true
   url: http://127.0.0.1:1234/v1
-  model: qwen3.5-9b
+  api: lmstudio
+  model: google/gemma-4-12b-qat
   timeout_seconds: 20
 
 generation:

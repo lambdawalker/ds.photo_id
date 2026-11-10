@@ -63,10 +63,29 @@ def finalize_prompt(draft, required_phrases, llm):
         ],
     }
     try:
-        response = request_json(
-            f"{llm['url'].rstrip('/')}/chat/completions", llm["timeout_seconds"], payload
-        )
-        candidate = response["choices"][0]["message"]["content"].strip()
+        if llm.get("api", "openai") == "lmstudio":
+            native_payload = {
+                "model": payload["model"],
+                "system_prompt": payload["messages"][0]["content"],
+                "input": payload["messages"][1]["content"],
+                "temperature": payload["temperature"],
+                "max_output_tokens": payload["max_tokens"],
+                "reasoning": "off",
+                "store": False,
+            }
+            base_url = llm["url"].rstrip("/").removesuffix("/v1")
+            response = request_json(
+                f"{base_url}/api/v1/chat", llm["timeout_seconds"], native_payload
+            )
+            candidate = " ".join(
+                item["content"] for item in response["output"] if item["type"] == "message"
+            ).strip()
+        else:
+            payload["chat_template_kwargs"] = {"enable_thinking": False}
+            response = request_json(
+                f"{llm['url'].rstrip('/')}/chat/completions", llm["timeout_seconds"], payload
+            )
+            candidate = response["choices"][0]["message"]["content"].strip()
         normalized = " ".join(candidate.casefold().split())
         if not candidate or len(candidate.split()) > 260 or "\n" in candidate or "<think>" in normalized:
             raise ValueError("expected one short portrait paragraph")
