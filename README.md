@@ -9,12 +9,9 @@ Generate synthetic ID-style portraits using Qwen Image 2.1 in ComfyUI. Each data
 
 ## Generate portraits
 
-Install the generator dependencies and start a ComfyUI build that supports `TextEncodeQwenImage21` and `QwenImage21Cache`. The API graph in `res/qwen_image_2_1_api.json` uses the supplied workflow's Qwen UNet, text encoder and VAE. Install those exact model files on the ComfyUI server or adjust their names in the graph.
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and start a ComfyUI build that supports `TextEncodeQwenImage21` and `QwenImage21Cache`. The API graph in `res/qwen_image_2_1_api.json` uses the supplied workflow's Qwen UNet, text encoder and VAE. Install those exact model files on the ComfyUI server or adjust their names in the graph.
 
-```bash
-python -m pip install -r requirements.txt
-python photo_id_generator.py --config config.yaml
-```
+On Linux or macOS, run `./run.sh`. On Windows, run `run.bat` (or `.\run.bat` in PowerShell). Both launchers use the locked uv environment and forward generator arguments such as `--config path/to/config.yaml`.
 
 Edit `config.yaml` to set the ComfyUI URL, the local LLM's OpenAI-compatible API base URL and model ID, and the batch size, seed, and output directory. For a smoke test, set `generation.samples` to a small number and use a separate output directory. Set `llm.enabled: false` to use the template directly.
 
@@ -50,10 +47,10 @@ The sampler allocates the batch across individual ages by largest remainder and 
 
 ## Publish to Hugging Face
 
-The publisher requires Python 3.10 or later, `datasets` and `huggingface_hub`. It skips images whose matching prompt is missing, unreadable or blank. The `body` split contains the image and prompt pairs.
+The publisher uses the optional `publish` dependencies. It skips images whose matching prompt is missing, unreadable or blank. The `body` split contains the image and prompt pairs.
 
 ```bash
-python publish_data_set.py --path ./dataset/idPhoto --user your_username --dataset_name your_dataset_name
+uv run --locked --extra publish python publish_data_set.py --path ./dataset/idPhoto --user your_username --dataset_name your_dataset_name
 ```
 
 The [hosted dataset](https://huggingface.co/datasets/lambdaWalker/ds.photo_id) has its own dataset card and license information.

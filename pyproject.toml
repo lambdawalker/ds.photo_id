@@ -1,0 +1,18 @@
+[project]
+name = "ds-photo-id"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "jinja2",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+publish = [
+    "datasets",
+    "huggingface-hub",
+    "pillow",
+]
+
+[tool.uv]
+package = false
