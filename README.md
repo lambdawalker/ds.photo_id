@@ -1,6 +1,6 @@
 # Photo ID Dataset Generator
 
-Generate synthetic ID-style portraits using Flux 1 in ComfyUI. Each dataset row contains two columns.
+Generate synthetic ID-style portraits using Qwen Image 2.1 in ComfyUI. Each dataset row contains two columns.
 
 | Column | Type | Contents |
 | --- | --- | --- |
@@ -9,13 +9,18 @@ Generate synthetic ID-style portraits using Flux 1 in ComfyUI. Each dataset row 
 
 ## Generate portraits
 
-Start ComfyUI with Flux 1 at `http://127.0.0.1:8188/` and run the generator from the repository root.
+Install the generator dependencies and start a ComfyUI build that supports `TextEncodeQwenImage21` and `QwenImage21Cache`. The API graph in `res/qwen_image_2_1_api.json` uses the supplied workflow's Qwen UNet, text encoder and VAE. Install those exact model files on the ComfyUI server or adjust their names in the graph.
 
 ```bash
-python photo_id_generator.py
+python -m pip install -r requirements.txt
+python photo_id_generator.py --config config.yaml
 ```
 
-Place the generated images and prompt files in the layout below. Pair files by their filename stem.
+Edit `config.yaml` to set the ComfyUI URL, the local LLM's OpenAI-compatible API base URL and model ID, and the batch size, seed, and output directory. For a smoke test, set `generation.samples` to a small number and use a separate output directory. Set `llm.enabled: false` to use the template directly.
+
+The external LLM edits the sampled description at low temperature. The generator checks that the sampled phrases and exact age survive, falls back to the template on a failed check or request, and appends the fixed framing. The API graph bypasses the supplied editor workflow's optional in-graph prompt refiner and uses the built-in PNG saver. Seeds are repeatable for the same batch settings. Use a fresh output directory when changing the batch size, seed, workflow, or prompt settings because reruns skip existing image/prompt pairs.
+
+The generator writes the downloaded image and the exact positive prompt sent to ComfyUI. Files are paired by stem.
 
 ```text
 dataset/idPhoto/

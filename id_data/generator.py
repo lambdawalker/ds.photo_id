@@ -10,13 +10,12 @@ from .skin import get_skin
 
 
 def generate_sample_data(age):
-    use_rare = random.randint(1, 10) == 1
     gender = random.choice(GENDERS)
 
     ancestry = get_ancestry()
-    skin = get_skin(age, use_rare)
-    eyes = get_eyes(use_rare)
-    face = get_face(eyes["shape"], use_rare)
+    skin = get_skin(age, random.random() < 0.1)
+    eyes = get_eyes(random.random() < 0.1)
+    face = get_face(eyes["shape"], random.random() < 0.1)
     hair = get_hair(gender, age)
     clothing = get_clothing(gender)
     metadata = get_metadata(gender)

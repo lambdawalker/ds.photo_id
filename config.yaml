@@ -1,0 +1,14 @@
+comfyui:
+  url: http://127.0.0.1:8188
+  timeout_seconds: 600
+
+llm:
+  enabled: true
+  url: http://127.0.0.1:1234/v1
+  model: qwen3.5-9b
+  timeout_seconds: 20
+
+generation:
+  samples: 10000
+  seed: 42
+  output_dir: dataset/idPhoto
