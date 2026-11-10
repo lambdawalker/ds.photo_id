@@ -60,7 +60,7 @@ class HTTPTests(unittest.TestCase):
                 self.assertEqual(graph['452']['inputs']['prompt'], prompt)
                 self.assertIn('waist-up shot', graph['452']['inputs']['negative_prompt'])
                 self.assertEqual(graph['458']['inputs']['seed'], 123)
-                self.assertEqual(graph['461']['inputs']['filename_prefix'], 'photo_id/photoId_00001')
+                self.assertRegex(graph['461']['inputs']['filename_prefix'], r'^photo_id/photoId_00001_[0-9a-f]{32}$')
                 self.assertNotEqual(workflow['452']['inputs']['prompt'], prompt)
                 background = json.loads((ROOT / 'res/birefnet_api.json').read_text())
                 with tempfile.TemporaryDirectory() as directory:

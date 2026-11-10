@@ -33,7 +33,7 @@ class Dashboard:
         total = s.config['generation']['samples']
         prompts = s.db.execute('SELECT COUNT(*) FROM jobs WHERE prompt IS NOT NULL').fetchone()[0]
         for stem in s.originals - self.original_times.keys():
-            path = s.output / 'original' / f'{stem}.png'
+            path = s.image_path('original', stem)
             if path.is_file():
                 self.original_times[stem] = path.stat().st_mtime_ns
         latest = []
@@ -41,10 +41,10 @@ class Dashboard:
             job = s.db.execute('SELECT prompt,state,error FROM jobs WHERE stem=?', (stem,)).fetchone()
             if job is None:
                 continue
-            transparent = s.output / 'transparent' / f'{stem}.png'
+            transparent = s.transparent_path({'stem': stem})
             latest.append({'parameters': f'/parameters/{stem}.json' if (s.output / 'parameters' / f'{stem}.json').is_file() else None, 'stem': stem, 'prompt': job['prompt'], 'state': job['state'], 'error': job['error'],
-                           'original': f'/image/original/{stem}.png',
-                           'transparent': f'/image/transparent/{stem}.png' if transparent.is_file() else None})
+                           'original': f'/image/original/{s.image_path("original", stem).name}',
+                           'transparent': f'/image/transparent/{transparent.name}' if transparent.is_file() else None})
         prompt_eta, image_eta, averages = p.estimates()
         done = counts.get('done', 0)
         status = 'stopping' if p.stopping else ('paused' if p.paused else ('complete' if done == total else 'running'))
@@ -105,13 +105,13 @@ class Dashboard:
                         return self.respond(200, result)
                     except Exception:
                         return self.respond(503, {'error': 'Session unavailable'})
-                match = re.fullmatch(r'/image/(original|transparent)/(photoId_\d{5,}\.png)', path)
+                match = re.fullmatch(r'/image/(original|transparent)/(photoId_\d{5,}\.(?:png|webp))', path)
                 if match:
                     variant, filename = match.groups()
                     directory = (dashboard.session.output / variant).resolve()
                     target = (directory / filename).resolve()
                     if target.parent == directory and target.is_file():
-                        return self.respond(200, target.read_bytes(), 'image/png')
+                        return self.respond(200, target.read_bytes(), 'image/webp' if target.suffix == '.webp' else 'image/png')
                 metadata = re.fullmatch(r'/parameters/(photoId_\d{5,}\.json)', path)
                 if metadata:
                     directory = (dashboard.session.output / 'parameters').resolve()

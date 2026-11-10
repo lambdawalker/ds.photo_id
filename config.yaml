@@ -1,6 +1,9 @@
 comfyui:
   url: http://192.168.1.186:8188
   timeout_seconds: 600
+  cleanup:
+    enabled: true
+    token_env: PHOTO_ID_CLEANUP_TOKEN
 
 llm:
   enabled: true
@@ -14,6 +17,10 @@ generation:
   seed: 42
   output_dir: dataset/idPhoto
   prompt_queue_size: 64
+  image_storage:
+    format: webp
+    quality: 90
+    lossless: false
 
 web:
   enabled: true

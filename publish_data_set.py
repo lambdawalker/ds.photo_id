@@ -40,7 +40,8 @@ def compile_photo_id_dataset(data_path: str) -> Dataset:
                 logger.warning("Skipping %s: generation prompt is empty", filename)
                 continue
 
-            transparent_path = os.path.join(transparent_dir, f"{stem}.png")
+            transparent_path = next((os.path.join(transparent_dir, f'{stem}.{ext}') for ext in ('webp','png')
+                                     if os.path.isfile(os.path.join(transparent_dir, f'{stem}.{ext}'))), '')
             if not os.path.isfile(transparent_path):
                 logger.warning("Skipping %s: transparent version is missing", filename)
                 continue

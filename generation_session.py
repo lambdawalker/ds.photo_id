@@ -11,6 +11,9 @@ from filelock import FileLock
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from id_data import generate_ages
+import remote_cleanup
+from file_storage import atomic_write
+from image_storage import settings as storage_settings, encode, info as image_info
 from processing_estimates import estimate, rolling_averages
 from photo_id_generator import (
     ROOT, compose_prompt, ComfyGenerationError, finalize_prompt, prepare_prompt,
@@ -22,6 +25,7 @@ class Session:
     def __init__(self, config, config_dir):
         self.config = config
         generation = config['generation']
+        self.storage = storage_settings(generation.get('image_storage', {}))
         self.capacity = generation.get('prompt_queue_size', 64)
         if not isinstance(self.capacity, int) or self.capacity < 1:
             raise ValueError('generation.prompt_queue_size must be a positive integer')
@@ -45,6 +49,9 @@ class Session:
                     remote_id TEXT, remote_url TEXT, error TEXT
                 );
                 CREATE INDEX IF NOT EXISTS jobs_state ON jobs(state, id);
+                CREATE TABLE IF NOT EXISTS cleanup_queue (
+                    url TEXT NOT NULL, prompt_id TEXT NOT NULL, PRIMARY KEY(url, prompt_id)
+                );
                 CREATE TABLE IF NOT EXISTS timings (
                     id INTEGER PRIMARY KEY, stage TEXT NOT NULL, seconds REAL NOT NULL
                 );
@@ -75,7 +82,7 @@ class Session:
                 self.db.execute("UPDATE jobs SET state='pending' WHERE state='prompting'")
                 self.db.execute("UPDATE jobs SET state='ready' WHERE state='rendering'")
             self._reconcile_files()
-            self.originals = {path.stem for path in (self.output / "original").glob("*.png")}
+            self.originals = {path.stem for path in (self.output / "original").iterdir() if path.suffix in (".png", ".webp")}
             # Refresh only unsubmitted prompts without an existing original. In-flight
             # jobs keep the exact prompt that produced their remote image.
             for job in self.db.execute("SELECT * FROM jobs WHERE prompt IS NOT NULL AND remote_id IS NULL").fetchall():
@@ -98,7 +105,7 @@ class Session:
                 draft, required, sample = prepare_prompt(age, prompt_seed, template, include_data=True)
                 metadata = {'sample': sample, 'prompt_seed': prompt_seed, 'batch': settings,
                             'provenance': 'captured_at_sampling'}
-                if (self.output / 'original' / f'photoId_{i:05d}.png').is_file():
+                if any((self.output / 'original' / f'photoId_{i:05d}.{ext}').is_file() for ext in ('png','webp')):
                     # Importing files without a journal cannot establish their old inputs.
                     draft, required = '', []
                     metadata = {'sample': None, 'prompt_seed': None, 'batch': None,
@@ -141,11 +148,11 @@ class Session:
                 if not prompt.is_file():
                     raise ValueError(f'Existing image has no prompt: {image}')
                 text = prompt.read_text(encoding='utf-8')
-                size = png_info(image.read_bytes())
+                size = image_info(image.read_bytes())
                 if not text.strip() or (job['prompt'] and job['prompt'] != text):
                     raise ValueError(f'Existing image/prompt pair is inconsistent: {job["stem"]}')
                 complete = transparent.is_file()
-                if complete and png_info(transparent.read_bytes(), require_alpha=True) != size:
+                if complete and image_info(transparent.read_bytes(), require_alpha=True) != size:
                     raise ValueError(f'Image dimensions differ: {job["stem"]}')
                 state = 'done' if complete else ('failed' if job['state'] == 'failed' else 'ready')
                 self.update(job['id'], state=state, prompt=text,
@@ -154,11 +161,18 @@ class Session:
                 self.update(job['id'], state='ready', remote_id=None, remote_url=None,
                             background_id=None, background_url=None)
 
+    def image_path(self, variant, stem):
+        existing = [self.output / variant / f'{stem}.{ext}' for ext in ('png', 'webp')
+                    if (self.output / variant / f'{stem}.{ext}').is_file()]
+        if len(existing) > 1:
+            raise ValueError(f'Duplicate image variants: {variant}/{stem}')
+        return existing[0] if existing else self.output / variant / f'{stem}.{self.storage["format"]}'
+
     def paths(self, job):
-        return self.output / 'original' / f'{job["stem"]}.png', self.output / 'prompts' / f'{job["stem"]}.txt'
+        return self.image_path('original', job['stem']), self.output / 'prompts' / f'{job["stem"]}.txt'
 
     def transparent_path(self, job):
-        return self.output / 'transparent' / f'{job["stem"]}.png'
+        return self.image_path('transparent', job['stem'])
 
     def update(self, job_id, **values):
         allowed = {'prompt', 'state', 'remote_id', 'remote_url', 'background_id', 'background_url', 'error', 'parameters'}
@@ -199,13 +213,22 @@ class Session:
         record = {**metadata, 'schema_version': 1, 'id': job['stem'],
                   'image_seed': None if metadata.get('image_seed_unknown') else job['image_seed'], 'draft_prompt': job['draft'],
                   'required_phrases': json.loads(job['required']), 'prompt': job['prompt'],
-                  'files': {'original': f'original/{job["stem"]}.png',
-                            'transparent': f'transparent/{job["stem"]}.png',
+                  'files': {'original': self.paths(job)[0].relative_to(self.output).as_posix(),
+                            'transparent': self.transparent_path(job).relative_to(self.output).as_posix(),
                             'prompt': f'prompts/{job["stem"]}.txt'}}
         path = self.output / 'parameters' / f'{job["stem"]}.json'
-        temporary = path.with_suffix('.json.tmp')
-        temporary.write_text(json.dumps(record, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
-        temporary.replace(path)
+        atomic_write(path, (json.dumps(record, indent=2, ensure_ascii=False) + '\n').encode('utf-8'))
+
+    def queue_cleanup(self, job_id):
+        job = self.db.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone()
+        image, prompt = self.paths(job)
+        if (not image.is_file() or not self.transparent_path(job).is_file()
+                or not (self.output / 'parameters' / f'{job["stem"]}.json').is_file()):
+            return
+        with self.db:
+            for id_key, url_key in (('remote_id', 'remote_url'), ('background_id', 'background_url')):
+                if job[id_key] and job[url_key]:
+                    self.db.execute('INSERT OR IGNORE INTO cleanup_queue VALUES(?,?)', (job[url_key], job[id_key]))
 
     def record_time(self, stage, seconds):
         with self.db:
@@ -233,6 +256,7 @@ class Pipeline:
         self.changed = asyncio.Event()
         self.tasks = []
         self.running = {}
+        self.cleanup_changed = asyncio.Event()
 
     async def timed(self, stage, function, *args, learn=True):
         self.running[stage] = time.monotonic()
@@ -257,6 +281,8 @@ class Pipeline:
 
     def start(self):
         self.tasks = [asyncio.create_task(self._worker('llm')), asyncio.create_task(self._worker('image'))]
+        if self.session.config.get('comfyui', {}).get('cleanup', {}).get('enabled', False):
+            self.tasks.append(asyncio.create_task(self._cleanup_worker()))
 
     def pause(self):
         self.paused = True
@@ -272,8 +298,44 @@ class Pipeline:
 
     async def stop(self):
         self.stopping = True
+        self.cleanup_changed.set()
         self.changed.set()
         await asyncio.gather(*self.tasks)
+
+    async def _cleanup_worker(self):
+        config = self.session.config['comfyui']['cleanup']
+        if not remote_cleanup.token(config):
+            self.notify('image', 'Server cleanup pending: set PHOTO_ID_CLEANUP_TOKEN and install the cleanup extension on ComfyUI.')
+            return
+        for row in self.session.db.execute("SELECT id FROM jobs WHERE state='done'").fetchall():
+            self.session.queue_cleanup(row['id'])
+        reported = False
+        while not self.stopping:
+            self.cleanup_changed.clear()
+            for row in self.session.db.execute('SELECT * FROM cleanup_queue ORDER BY rowid LIMIT 16').fetchall():
+                if self.stopping:
+                    break
+                try:
+                    await asyncio.to_thread(remote_cleanup.cleanup, row['url'], row['prompt_id'], config)
+                    with self.session.db:
+                        self.session.db.execute('DELETE FROM cleanup_queue WHERE url=? AND prompt_id=?', (row['url'], row['prompt_id']))
+                        # Do not enqueue the same acknowledged IDs after a restart.
+                        self.session.db.execute('UPDATE jobs SET remote_id=NULL,remote_url=NULL WHERE remote_id=? AND remote_url=?', (row['prompt_id'], row['url']))
+                        self.session.db.execute('UPDATE jobs SET background_id=NULL,background_url=NULL WHERE background_id=? AND background_url=?', (row['prompt_id'], row['url']))
+                    self.notify('image', 'Removed downloaded job files from ComfyUI.')
+                except Exception as error:
+                    if not reported:
+                        self.notify('image', f'Server cleanup deferred (will retry): {error}')
+                        reported = True
+                    # Rotate failed records so lost history for one job cannot
+                    # prevent newer downloaded jobs from being cleaned up.
+                    with self.session.db:
+                        self.session.db.execute('DELETE FROM cleanup_queue WHERE url=? AND prompt_id=?', (row['url'], row['prompt_id']))
+                        self.session.db.execute('INSERT INTO cleanup_queue(url,prompt_id) VALUES(?,?)', (row['url'], row['prompt_id']))
+            try:
+                await asyncio.wait_for(self.cleanup_changed.wait(), timeout=30)
+            except asyncio.TimeoutError:
+                pass
 
     async def _worker(self, stage):
         session = self.session
@@ -331,14 +393,15 @@ class Pipeline:
             if remote_id:
                 comfy['url'] = job['remote_url']
             else:
-                session.capture_parameters(job['id'], image_seed_unknown=False, image_requested_at=datetime.now(timezone.utc).isoformat(), image_workflow=build_image_graph(
-                    session.workflow, job['prompt'], job['image_seed'], job['stem']))
-                remote_id = await asyncio.to_thread(submit_image, session.workflow, job['prompt'], job['image_seed'], job['stem'], comfy)
+                graph = build_image_graph(session.workflow, job['prompt'], job['image_seed'], job['stem'])
+                session.capture_parameters(job['id'], image_storage=session.storage, image_seed_unknown=False,
+                    image_requested_at=datetime.now(timezone.utc).isoformat(), image_workflow=graph)
+                remote_id = await asyncio.to_thread(submit_image, session.workflow, job['prompt'], job['image_seed'], job['stem'], comfy, graph=graph)
                 session.update(job['id'], remote_id=remote_id, remote_url=comfy['url'])
             png = await asyncio.to_thread(wait_image, remote_id, job['stem'], comfy)
             png_info(png)
             self._save(prompt_path, job['prompt'].encode('utf-8'))
-            self._save(image_path, png)
+            self._save(image_path, encode(png, session.storage))
             session.originals.add(job['stem'])
             if not job['remote_id']:
                 session.record_time('original', time.monotonic() - phase_start)
@@ -355,20 +418,21 @@ class Pipeline:
             else:
                 session.capture_parameters(job['id'], background_removal={
                     'workflow': session.background_workflow,
-                    'source': f'original/{job["stem"]}.png'})
+                    'source': image_path.relative_to(session.output).as_posix(), 'storage': session.storage})
                 remote_id = await asyncio.to_thread(submit_background, session.background_workflow, image_path, comfy)
                 session.update(job['id'], background_id=remote_id, background_url=comfy['url'])
             png = await asyncio.to_thread(wait_image, remote_id, job['stem'], comfy, '6')
-            if png_info(png, require_alpha=True) != png_info(image_path.read_bytes()):
+            if png_info(png, require_alpha=True) != image_info(image_path.read_bytes()):
                 raise ValueError('Transparent output dimensions do not match the original')
-            self._save(transparent_path, png)
+            self._save(transparent_path, encode(png, session.storage))
             if not job['background_id']:
                 session.record_time('background', time.monotonic() - phase_start)
             self.running.pop('background', None)
         session.update(job['id'], state='done', error=None)
+        if session.config.get('comfyui', {}).get('cleanup', {}).get('enabled', False):
+            session.queue_cleanup(job['id'])
+            self.cleanup_changed.set()
 
     @staticmethod
     def _save(path, data):
-        temporary = path.with_suffix(path.suffix + '.tmp')
-        temporary.write_bytes(data)
-        temporary.replace(path)
+        atomic_write(path, data)

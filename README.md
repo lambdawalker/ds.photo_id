@@ -19,14 +19,14 @@ Edit `config.yaml` to set the ComfyUI URL, the local LLM's OpenAI-compatible API
 
 The external LLM edits the sampled description at low temperature. The generator checks that the sampled phrases and exact age survive, falls back to the template on a failed check or request, and appends the fixed framing. The API graph bypasses the supplied editor workflow's optional in-graph prompt refiner and uses the built-in PNG saver. Seeds are repeatable for the same batch settings. Each output directory is a resumable session. Its sampled descriptions, required traits, image seeds, completed prompts, and workflow are saved once. Use a fresh output directory to change batch size, seed, workflow, or sampled prompt settings. Endpoint settings can be changed between runs; an already-submitted image is polled on its original server.
 
-The generator saves the original before running BiRefNet on the ComfyUI server. It then saves a transparent RGBA PNG with matching dimensions. Both images share the exact positive prompt sent to Qwen and are matched by filename stem.
+The generator saves the original before running BiRefNet on the ComfyUI server. It then saves a transparent image with matching dimensions (WebP by default, optionally PNG). Both images share the exact positive prompt sent to Qwen and are matched by filename stem.
 
 ```text
 dataset/idPhoto/
 ├── original/
-│   └── photoId_00001.png
+│   └── photoId_00001.webp
 ├── transparent/
-│   └── photoId_00001.png
+│   └── photoId_00001.webp
 ├── prompts/
 │   └── photoId_00001.txt
 ├── parameters/
@@ -39,6 +39,22 @@ dataset/idPhoto/
 The positive prompt begins with fixed camera composition: a tight, straight-on headshot, crown-to-chin height around two thirds of the image, a small margin over the head, and upper shoulders reaching beyond the side edges. Clothing descriptions apply only to the neckline and upper shoulders. The LLM edits subject traits separately, then the fixed composition is prepended. Negative conditioning excludes waist-up, mid-body and distant shots.
 
 Restarting upgrades completed prompts that have not been submitted and have no original image yet. Submitted jobs and existing image/prompt records retain their original prompt. The full diagnostic UI workflow uses the same framing. These are model instructions rather than measured crop enforcement; review a small fresh batch on your server before generating the full dataset.
+
+## Image storage and ComfyUI cleanup
+
+The supplied configuration saves **WebP at quality 90** for both image variants. WebP supports lossy color compression with a lossless transparency channel. Configure `generation.image_storage.format` (`webp` or `png`), `quality` (0–100), and `lossless` (true/false). Encoding uses Pillow locally after PNG downloads; the ComfyUI graph needs no new image-saving nodes. Original WebP images are uploaded as WebP for removal. Changing the setting applies to missing/new images; existing PNGs remain intact and mixed PNG/WebP sessions resume normally. File paths and encoding settings are included in parameter JSON. The publisher and web explorer support both formats. Avoid keeping both PNG and WebP copies with the same stem in the same variant folder.
+
+For automated server-side deletion, install the small extension shipped here:
+
+1. Copy `comfyui_extensions/ds_photo_id_cleanup/` into `ComfyUI/custom_nodes/ds_photo_id_cleanup/` on the Spark.
+2. Set `PHOTO_ID_CLEANUP_TOKEN` to the same randomly generated secret in both the ComfyUI process environment and the generator process environment. For example, generate a token with `python -c "import secrets; print(secrets.token_urlsafe(32))"`. On Linux use `export PHOTO_ID_CLEANUP_TOKEN=YOUR_TOKEN` before starting ComfyUI; in PowerShell use `$env:PHOTO_ID_CLEANUP_TOKEN='YOUR_TOKEN'` before `run.bat`.
+3. Restart ComfyUI. Keep `comfyui.cleanup.enabled: true` in the generator configuration. The client environment variable name can be configured with `comfyui.cleanup.token_env`; the extension always reads `PHOTO_ID_CLEANUP_TOKEN`.
+
+ComfyUI's standard history deletion does not remove image files. This extension adds authenticated `POST /photo-id/cleanup`, using saved job history to identify files. It only accepts this project's numbered outputs beneath `output/photo_id/` and its UUID-named uploaded inputs, with path checks that reject traversal and files outside those roots. It never accepts arbitrary filesystem paths from the client. Job history is retained for idempotent deletion retries until ComfyUI evicts it normally.
+
+Output names on the ComfyUI server include a unique request suffix, preventing cached SaveImage results from referring to previously deleted output files. Local dataset stems stay unchanged.
+
+The generator queues cleanup **only after the original, transparent version, and parameters JSON are committed locally**. Cleanup runs independently, retries every 30 seconds and on restart, and does not pause generation if the endpoint or token is missing. Pending cleanup lives in `session.sqlite3`. Successful acknowledgements remove the queue entry and clear the associated remote IDs. Do not manually erase ComfyUI history before cleanup finishes: missing history cannot identify old files and stays pending. Uploads orphaned before a workflow is accepted/acknowledged cannot be recovered through job history. Diagnostics saved outside `photo_id/` are intentionally excluded.
 
 ## Structured generation parameters
 

@@ -5,6 +5,7 @@ requires-python = ">=3.10"
 dependencies = [
     "filelock>=4.1.0",
     "jinja2",
+    "pillow>=12.3.0",
     "pyyaml",
     "textual>=8.2.8",
 ]

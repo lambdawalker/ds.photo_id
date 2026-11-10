@@ -163,13 +163,13 @@ def build_image_graph(workflow, prompt, seed, stem):
     graph["452"]["inputs"]["prompt"] = prompt
     graph["452"]["inputs"]["negative_prompt"] = NEGATIVE_PROMPT
     graph["458"]["inputs"]["seed"] = seed
-    graph["461"]["inputs"]["filename_prefix"] = f"photo_id/{stem}"
+    graph["461"]["inputs"]["filename_prefix"] = f"photo_id/{stem}_{uuid.uuid4().hex}"
 
     return graph
 
 
-def submit_image(workflow, prompt, seed, stem, comfyui):
-    graph = build_image_graph(workflow, prompt, seed, stem)
+def submit_image(workflow, prompt, seed, stem, comfyui, graph=None):
+    graph = graph if graph is not None else build_image_graph(workflow, prompt, seed, stem)
     url = comfyui["url"].rstrip("/")
     queued = request_json(f"{url}/prompt", 30, {"prompt": graph})
     prompt_id = queued.get("prompt_id")
@@ -218,10 +218,12 @@ def png_info(data, require_alpha=False):
 def submit_background(workflow, image_path, comfyui):
     """Upload the saved original, then run the native BiRefNet graph."""
     boundary = uuid.uuid4().hex
-    filename = f'photo_id_{uuid.uuid4().hex}.png'
+    extension = image_path.suffix.lower()
+    filename = f'photo_id_{uuid.uuid4().hex}{extension}'
+    mime = 'image/webp' if extension == '.webp' else 'image/png'
     body = (
         f'--{boundary}\r\nContent-Disposition: form-data; name="image"; filename="{filename}"\r\n'
-        'Content-Type: image/png\r\n\r\n'
+        f'Content-Type: {mime}\r\n\r\n'
     ).encode() + image_path.read_bytes() + f'\r\n--{boundary}--\r\n'.encode()
     url = comfyui['url'].rstrip('/')
     request = Request(f'{url}/upload/image', data=body,

@@ -91,6 +91,8 @@ dependencies = [
     { name = "filelock", version = "4.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "filelock", version = "4.2.10", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "jinja2" },
+    { name = "pillow", version = "12.3.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "pillow", version = "13.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pyyaml" },
     { name = "textual" },
 ]
@@ -109,6 +111,7 @@ requires-dist = [
     { name = "filelock", specifier = ">=4.1.0" },
     { name = "huggingface-hub", marker = "extra == 'publish'" },
     { name = "jinja2" },
+    { name = "pillow", specifier = ">=12.3.0" },
     { name = "pillow", marker = "extra == 'publish'" },
     { name = "pyyaml" },
     { name = "textual", specifier = ">=8.2.8" },
