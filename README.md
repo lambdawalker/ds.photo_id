@@ -60,7 +60,7 @@ Both workflows save test outputs under `ComfyUI/output/diagnostics/`. They do no
 
 ## Generation dashboard
 
-The launchers open a Textual dashboard with separate prompt and image panels. Each panel shows progress, its current job and a scrolling activity log. Panels stack on narrower terminals. The LLM worker prepares prompts while the ComfyUI worker renders the previous completed prompt. Blocking HTTP requests run on separate threads, leaving the UI responsive. Only one image is submitted at a time.
+The launchers open a Textual dashboard with separate prompt and image panels. Each panel uses compact status rows so most of its height is available to the scrolling activity log, with up to 2,000 retained lines. Press **D** to show or hide connection URLs and the dataset path. Panels stack on narrower terminals. The LLM worker prepares prompts while the ComfyUI worker renders the previous completed prompt. Blocking HTTP requests run on separate threads, leaving the UI responsive. Only one image is submitted at a time.
 
 | Control | Action |
 | --- | --- |

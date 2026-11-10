@@ -25,29 +25,28 @@ class GenerationApp(App):
     SUB_TITLE = 'Qwen Image · persistent generation queue'
     CSS = '''
     Screen { background: #101820; color: #dce6ed; }
-    Header { background: #1b2b38; }
-    #summary { height: 3; padding: 1 2 0 2; color: #6de2ca; }
-    #location { height: 2; padding: 0 2; color: #9baebc; }
-    #panels { height: 1fr; padding: 0 1; overflow-y: auto; }
-    .panel { width: 1fr; margin: 0 1; border: round #39556a; padding: 1 2; }
-    .heading { height: 2; text-style: bold; color: #6de2ca; }
-    .endpoint { height: 2; color: #9baebc; }
-    .metrics { height: 3; }
-    .current { height: 3; color: #e8c884; }
-    ProgressBar { width: 1fr; height: 2; }
+    Header { background: #1b2b38; height: 1; }
+    #summary { height: 1; padding: 0 1; color: #6de2ca; }
+    #location { display: none; height: 1; padding: 0 1; color: #9baebc; }
+    #panels { height: 1fr; overflow-y: auto; }
+    .panel { width: 1fr; margin: 0; border: round #39556a; padding: 0 1; }
+    .heading { height: 1; text-style: bold; color: #6de2ca; }
+    .endpoint { display: none; height: 1; color: #9baebc; }
+    .metrics { height: 2; }
+    .current { height: 1; color: #e8c884; }
+    ProgressBar { width: 1fr; height: 1; }
     ProgressBar > Bar { width: 1fr; }
-    RichLog { height: 1fr; background: #14212b; border-top: solid #39556a; }
-    #controls { height: 5; align-horizontal: center; padding: 1; }
+    RichLog { height: 1fr; min-height: 3; background: #14212b; border-top: solid #39556a; }
+    #controls { height: 3; align-horizontal: center; padding: 0; }
     Button { margin: 0 1; }
     Footer { background: #1b2b38; }
     .compact #panels { layout: vertical; }
-    .compact .panel { width: 1fr; height: 1fr; min-height: 18; padding: 0 1; }
-    .compact .endpoint { height: 1; }
-    .compact .current { height: 2; }
-    .compact .metrics { height: 2; }
+    .compact .panel { width: 1fr; height: 1fr; min-height: 11; }
+    .details #location, .details .endpoint { display: block; }
     '''
     BINDINGS = [
         ('space', 'toggle_pause', 'Pause / resume'),
+        ('d', 'toggle_details', 'Connection details'),
         ('r', 'retry', 'Retry failures'),
         ('shift+r', 'resubmit', 'Resubmit lost jobs'),
         ('q', 'save_exit', 'Save & exit'),
@@ -79,7 +78,7 @@ class GenerationApp(App):
                     yield Static('Preparing…', id=f'{stage}-metrics', classes='metrics', markup=False)
                     yield ProgressBar(total=self.config['generation']['samples'], show_eta=False, id=f'{stage}-progress')
                     yield Static('Waiting', id=f'{stage}-current', classes='current', markup=False)
-                    yield RichLog(id=f'{stage}-log', wrap=True, min_width=1, max_lines=300, markup=False)
+                    yield RichLog(id=f'{stage}-log', wrap=True, min_width=1, max_lines=2000, markup=False)
         with Horizontal(id='controls'):
             yield Button('Pause', id='pause', variant='warning', disabled=True)
             yield Button('Retry failures', id='retry', disabled=True)
@@ -141,6 +140,9 @@ class GenerationApp(App):
             self.query_one(f'#{stage}-current', Static).update(f'Working: {current}' if current else idle)
         self.query_one('#pause', Button).label = 'Resume' if self.pipeline.paused else 'Pause'
         self.query_one('#retry', Button).disabled = failed == 0 or self.closing
+
+    def action_toggle_details(self):
+        self.screen.toggle_class('details')
 
     def action_toggle_pause(self):
         if self.pipeline and not self.closing:
