@@ -50,7 +50,7 @@ class Dashboard:
         status = 'stopping' if p.stopping else ('paused' if p.paused else ('complete' if done == total else 'running'))
         return {'status': status, 'total': total, 'prompts': prompts, 'done': done,
                 'ready': counts.get('ready', 0), 'capacity': s.capacity, 'failed': counts.get('failed', 0),
-                'active': dict(p.active), 'eta': {'llm': prompt_eta, 'image': image_eta}, 'averages': averages,
+                'active': dict(p.active), 'work_remaining': dict(p.work_remaining), 'eta': {'llm': prompt_eta, 'image': image_eta}, 'averages': averages,
                 'logs': {stage: list(lines) for stage, lines in self.logs.items()}, 'latest': latest}
 
     async def action(self, action):

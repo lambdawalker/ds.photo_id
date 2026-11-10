@@ -35,7 +35,7 @@ class GenerationApp(App):
     .heading { height: 1; text-style: bold; color: #6de2ca; }
     .endpoint { display: none; height: 1; color: #9baebc; }
     .metrics { height: 2; }
-    .timing { height: 1; color: #9baebc; }
+    .timing { height: 2; color: #9baebc; }
     .current { height: 1; color: #e8c884; }
     ProgressBar { width: 1fr; height: 1; }
     ProgressBar > Bar { width: 1fr; }
@@ -149,13 +149,14 @@ class GenerationApp(App):
         else:
             status = 'Running — prompt and image workers operate concurrently'
         self.query_one('#summary', Static).update(status)
-        self.query_one('#llm-metrics', Static).update(f'{prompts:,} / {total:,} prompts prepared\nReady queue: {ready:,} / {self.session.capacity:,} · Failures: {llm_failed:,}')
+        capacity_label = str(self.session.capacity) if self.session.capacity is not None else 'unlimited'
+        self.query_one('#llm-metrics', Static).update(f'{prompts:,} / {total:,} prompts prepared\nReady queue: {ready:,} / {capacity_label} · Failures: {llm_failed:,}')
         self.query_one('#image-metrics', Static).update(f'{done:,} / {total:,} portraits complete (both images)\nFailures: {failed - llm_failed:,} · In flight: {int(bool(self.pipeline.active["image"]))}')
         self.query_one('#llm-progress', ProgressBar).update(progress=prompts)
         self.query_one('#image-progress', ProgressBar).update(progress=done)
         for stage in ('llm', 'image'):
             current = self.pipeline.active[stage]
-            idle = 'Paused' if self.pipeline.paused else ('Complete' if (prompts if stage == 'llm' else done) == total else ('Waiting for queue space' if stage == 'llm' and ready >= self.session.capacity else 'Waiting for work'))
+            idle = 'Paused' if self.pipeline.paused else ('Complete' if (prompts if stage == 'llm' else done) == total else ('Waiting for queue space' if stage == 'llm' and self.session.capacity is not None and ready >= self.session.capacity else 'Waiting for work'))
             self.query_one(f'#{stage}-current', Static).update(f'Working: {current}' if current else idle)
         if self.eta_cache is None or time.monotonic() - self.eta_updated >= 1:
             self.eta_cache = self.pipeline.estimates()
@@ -166,11 +167,14 @@ class GenerationApp(App):
             ('image', image_eta, (averages['original'] + averages['background'])
              if 'original' in averages and 'background' in averages else None),
         ):
-            label = 'On resume' if self.pipeline.paused else 'ETA'
+            label = 'Finish after resume' if self.pipeline.paused else 'Finish ETA'
             complete = (prompts if stage == 'llm' else done) == total
             value = 'complete' if complete else ('measuring…' if eta is None else f'~{duration(eta)}')
             speed = '' if average is None else f' · avg {duration(average)}/'+('prompt' if stage == 'llm' else 'portrait')
-            self.query_one(f'#{stage}-timing', Static).update(f'{label}: {value}{speed}')
+            work = self.pipeline.work_remaining[stage]
+            work_text = 'measuring…' if work is None else duration(work)
+            self.query_one(f'#{stage}-timing', Static).update(
+                f'Active work left: {work_text}{speed}\n{label}: {value}')
         self.query_one('#pause', Button).label = 'Resume' if self.pipeline.paused else 'Pause'
         self.query_one('#retry', Button).disabled = failed == 0 or self.closing
 

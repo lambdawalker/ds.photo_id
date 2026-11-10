@@ -17,9 +17,8 @@ def duration(seconds):
     return f'{days}d {hours:02d}h {minutes:02d}m'
 
 
-def estimate(pending_prompts, remaining_images, missing_originals, capacity, averages,
-             elapsed=None, has_ready=False):
-    """Approximate pipeline makespan, accounting for its slower stage and bounded queue."""
+def active_work(pending_prompts, remaining_images, missing_originals, averages, elapsed=None):
+    """Service time still required, with no idle time or queue blocking."""
     elapsed = elapsed or {}
     llm, original, background = (averages.get(key) for key in ('llm', 'original', 'background'))
     prompt_work = None if pending_prompts and llm is None else max(0, pending_prompts * (llm or 0) - elapsed.get('llm', 0))
@@ -27,8 +26,16 @@ def estimate(pending_prompts, remaining_images, missing_originals, capacity, ave
     if (not missing_originals or original is not None) and (not remaining_images or background is not None):
         image_work = (max(0, missing_originals * (original or 0) - elapsed.get('original', 0))
                       + max(0, remaining_images * (background or 0) - elapsed.get('background', 0)))
+    return prompt_work, image_work
+
+
+def estimate(pending_prompts, remaining_images, missing_originals, capacity, averages,
+             elapsed=None, has_ready=False):
+    """Approximate pipeline makespan, accounting for its slower stage and bounded queue."""
+    llm, original, background = (averages.get(key) for key in ('llm', 'original', 'background'))
+    prompt_work, image_work = active_work(pending_prompts, remaining_images, missing_originals, averages, elapsed)
     prompt_eta = prompt_work
-    if pending_prompts and prompt_eta is not None and original is not None and background is not None:
+    if capacity is not None and pending_prompts and prompt_eta is not None and original is not None and background is not None:
         # The producer cannot finish until enough image jobs have made queue space.
         prompt_eta = max(prompt_eta, max(0, remaining_images - capacity - 1) * (original + background))
     total_eta = image_work

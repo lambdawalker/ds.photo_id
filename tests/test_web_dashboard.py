@@ -44,6 +44,7 @@ class DashboardTests(unittest.IsolatedAsyncioTestCase):
         self.dashboard.record('llm', '<script>untrusted prompt</script>')
         body, _ = await self.request('/api/state')
         state = json.loads(body)
+        self.assertEqual(set(state['work_remaining']), {'llm', 'image'})
         self.assertEqual(len(state['latest']), 4)
         self.assertEqual(state['latest'][0]['stem'], 'photoId_00005')
         self.assertIsNotNone(state['latest'][0]['transparent'])

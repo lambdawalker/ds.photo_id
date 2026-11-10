@@ -15,7 +15,7 @@ generation:
   samples: 10000
   seed: 42
   output_dir: dataset/idPhoto
-  prompt_queue_size: 64
+  prompt_queue_size: null
   image_storage:
     format: webp
     quality: 90

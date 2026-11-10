@@ -1,5 +1,5 @@
 import unittest
-from processing_estimates import duration, estimate
+from processing_estimates import duration, estimate, active_work
 
 
 class EstimateTests(unittest.TestCase):
@@ -8,6 +8,23 @@ class EstimateTests(unittest.TestCase):
                                  {'llm': 2, 'original': 50, 'background': 10}, has_ready=True)
         self.assertEqual(total, 6000)
         self.assertGreater(prompt, 200)  # producer waits for queue space
+
+    def test_fast_llm_has_less_active_work_but_waits_for_full_queue(self):
+        # Matches the screenshot's 131 prepared, 66 images, and a full queue.
+        averages = {'llm': 3, 'original': 14, 'background': 1}
+        pending, remaining = 10000 - 131, 10000 - 66
+        llm_work, image_work = active_work(pending, remaining, remaining, averages)
+        llm_finish, batch_finish = estimate(pending, remaining, remaining, 64, averages, has_ready=True)
+        self.assertEqual(llm_work, pending * 3)
+        self.assertEqual(image_work, remaining * 15)
+        self.assertLess(llm_work, image_work / 4)
+        self.assertLess(abs(batch_finish - llm_finish), batch_finish * .01)
+
+    def test_unlimited_disk_queue_does_not_tie_llm_finish_to_images(self):
+        averages = {'llm': 3, 'original': 14, 'background': 1}
+        prompt_finish, image_finish = estimate(9869, 9934, 9934, None, averages, has_ready=True)
+        self.assertEqual(prompt_finish, 9869 * 3)
+        self.assertEqual(image_finish, 9934 * 15)
 
     def test_slow_llm_includes_last_image_tail(self):
         _, total = estimate(10, 10, 10, 64, {'llm': 100, 'original': 5, 'background': 1})

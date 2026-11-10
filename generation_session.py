@@ -14,7 +14,7 @@ from id_data import generate_ages
 import remote_cleanup
 from file_storage import atomic_write
 from image_storage import settings as storage_settings, encode, info as image_info
-from processing_estimates import estimate, rolling_averages
+from processing_estimates import estimate, active_work, rolling_averages
 from photo_id_generator import (
     ROOT, compose_prompt, ComfyGenerationError, finalize_prompt, prepare_prompt,
     submit_image, wait_image, submit_background, png_info, build_image_graph,
@@ -26,9 +26,9 @@ class Session:
         self.config = config
         generation = config['generation']
         self.storage = storage_settings(generation.get('image_storage', {}))
-        self.capacity = generation.get('prompt_queue_size', 64)
-        if not isinstance(self.capacity, int) or self.capacity < 1:
-            raise ValueError('generation.prompt_queue_size must be a positive integer')
+        self.capacity = generation.get('prompt_queue_size')
+        if self.capacity is not None and (not isinstance(self.capacity, int) or self.capacity < 1):
+            raise ValueError('generation.prompt_queue_size must be null or a positive integer')
         if not isinstance(generation['samples'], int) or generation['samples'] < 1:
             raise ValueError('generation.samples must be a positive integer')
         self.output = (Path(config_dir) / generation['output_dir']).resolve()
@@ -89,7 +89,11 @@ class Session:
                 if not self.paths(job)[0].exists():
                     self.update(job['id'], prompt=compose_prompt(job['prompt']))
             for job in self.db.execute('SELECT id,stem FROM jobs').fetchall():
-                if job['stem'] in self.originals:
+                row = self.db.execute('SELECT * FROM jobs WHERE id=?', (job['id'],)).fetchone()
+                if row['prompt'] is not None:
+                    prompt_path = self.paths(row)[1]
+                    if not prompt_path.exists() or job['stem'] not in self.originals:
+                        atomic_write(prompt_path, row['prompt'].encode('utf-8'))
                     self.write_parameters(job['id'])
         except BaseException:
             self.close()
@@ -257,6 +261,7 @@ class Pipeline:
         self.tasks = []
         self.running = {}
         self.cleanup_changed = asyncio.Event()
+        self.work_remaining = {'llm': None, 'image': None}
 
     async def timed(self, stage, function, *args, learn=True):
         self.running[stage] = time.monotonic()
@@ -275,6 +280,8 @@ class Pipeline:
         missing = sum(row['stem'] not in self.session.originals for row in remaining)
         elapsed = {key: time.monotonic() - start for key, start in self.running.items()}
         averages = self.session.averages()
+        prompt_work, image_work = active_work(pending, len(remaining), missing, averages, elapsed)
+        self.work_remaining = {'llm': prompt_work, 'image': image_work}
         prompt_eta, image_eta = estimate(pending, len(remaining), missing, self.session.capacity,
                                          averages, elapsed, any(row['prompt'] is not None for row in remaining))
         return prompt_eta, image_eta, averages
@@ -343,7 +350,7 @@ class Pipeline:
             # No awaits between clearing, checking and claiming: no lost wakeups.
             self.changed.clear()
             counts = session.counts()
-            full = counts.get('ready', 0) >= session.capacity
+            full = session.capacity is not None and counts.get('ready', 0) >= session.capacity
             job = None if self.paused or (stage == 'llm' and full) else session.next('pending' if stage == 'llm' else 'ready')
             if job is None:
                 await self.changed.wait()
@@ -355,6 +362,7 @@ class Pipeline:
                 if stage == 'llm':
                     result = await self.timed('llm', finalize_prompt, job['draft'], json.loads(job['required']), session.config['llm'])
                     prompt = compose_prompt(result)
+                    self._save(session.paths(job)[1], prompt.encode('utf-8'))
                     session.update(job['id'], prompt=prompt, state='ready', error=None)
                     session.capture_parameters(job['id'], prompt_finalization={
                         'enabled': session.config['llm']['enabled'],
