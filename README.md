@@ -81,6 +81,12 @@ Run the offline regression suite with:
 uv run --locked python -m unittest discover -s tests -v
 ```
 
+## Time estimates
+
+Each panel shows an ETA and average service time in one compact row. The image ETA estimates completion of the remaining batch, including original generation, background removal and prompt availability. The prompt ETA accounts for the bounded queue when image processing is slower. Estimates use the last 30 successful timings per stage, saved in the session database across restarts. Queue waits, idle periods and failures are excluded from those averages; retrieving already-submitted remote jobs does not train a new image-stage average.
+
+Expect “measuring…” until the needed stages have completed. Initial model loading and changing server load can make early estimates inaccurate. While paused, the row shows estimated processing time **on resume**, rather than a promised wall-clock finish time. Active requests continue to drain normally. These are approximate throughput estimates, not deadlines.
+
 ## Age distribution
 
 The sampler uses [U.S. Census Bureau Vintage 2025 national resident population estimates](https://www2.census.gov/programs-surveys/popest/datasets/2020-2025/national/asrh/nc-est2025-agesex-res.csv) for July 1, 2025. It uses the total across sexes (`SEX=0`) and normalizes across adults aged 18 and older. The Census 100+ category is represented by age 100 in prompts.

@@ -3,12 +3,14 @@ import asyncio
 import json
 import random
 import sqlite3
+import time
 from pathlib import Path
 
 from filelock import FileLock
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from id_data import generate_ages
+from processing_estimates import estimate, rolling_averages
 from photo_id_generator import (
     ROOT, compose_prompt, ComfyGenerationError, finalize_prompt, prepare_prompt,
     submit_image, wait_image, submit_background, png_info,
@@ -42,6 +44,9 @@ class Session:
                     remote_id TEXT, remote_url TEXT, error TEXT
                 );
                 CREATE INDEX IF NOT EXISTS jobs_state ON jobs(state, id);
+                CREATE TABLE IF NOT EXISTS timings (
+                    id INTEGER PRIMARY KEY, stage TEXT NOT NULL, seconds REAL NOT NULL
+                );
             ''')
             columns = {row['name'] for row in self.db.execute('PRAGMA table_info(jobs)')}
             with self.db:
@@ -69,6 +74,7 @@ class Session:
                 self.db.execute("UPDATE jobs SET state='pending' WHERE state='prompting'")
                 self.db.execute("UPDATE jobs SET state='ready' WHERE state='rendering'")
             self._reconcile_files()
+            self.originals = {path.stem for path in (self.output / "original").glob("*.png")}
             # Refresh only unsubmitted prompts without an existing original. In-flight
             # jobs keep the exact prompt that produced their remote image.
             for job in self.db.execute("SELECT * FROM jobs WHERE prompt IS NOT NULL AND remote_id IS NULL").fetchall():
@@ -162,6 +168,15 @@ class Session:
                 self.db.execute("UPDATE jobs SET remote_id=NULL, remote_url=NULL, background_id=NULL, background_url=NULL WHERE state='failed'")
             self.db.execute("UPDATE jobs SET state=CASE WHEN prompt IS NULL THEN 'pending' ELSE 'ready' END, error=NULL WHERE state='failed'")
 
+    def record_time(self, stage, seconds):
+        with self.db:
+            self.db.execute('INSERT INTO timings(stage, seconds) VALUES(?,?)', (stage, seconds))
+            self.db.execute('DELETE FROM timings WHERE stage=? AND id NOT IN '
+                            '(SELECT id FROM timings WHERE stage=? ORDER BY id DESC LIMIT 30)', (stage, stage))
+
+    def averages(self):
+        return rolling_averages(self.db.execute('SELECT stage, seconds FROM timings'))
+
     def close(self):
         if hasattr(self, 'db'):
             self.db.close()
@@ -178,6 +193,28 @@ class Pipeline:
         self.active = {'llm': None, 'image': None}
         self.changed = asyncio.Event()
         self.tasks = []
+        self.running = {}
+
+    async def timed(self, stage, function, *args, learn=True):
+        self.running[stage] = time.monotonic()
+        try:
+            result = await asyncio.to_thread(function, *args)
+            if learn:
+                self.session.record_time(stage, time.monotonic() - self.running[stage])
+            return result
+        finally:
+            self.running.pop(stage, None)
+
+    def estimates(self):
+        rows = self.session.db.execute('SELECT stem, prompt, state FROM jobs').fetchall()
+        remaining = [row for row in rows if row['state'] != 'done']
+        pending = sum(row['prompt'] is None for row in remaining)
+        missing = sum(row['stem'] not in self.session.originals for row in remaining)
+        elapsed = {key: time.monotonic() - start for key, start in self.running.items()}
+        averages = self.session.averages()
+        prompt_eta, image_eta = estimate(pending, len(remaining), missing, self.session.capacity,
+                                         averages, elapsed, any(row['prompt'] is not None for row in remaining))
+        return prompt_eta, image_eta, averages
 
     def start(self):
         self.tasks = [asyncio.create_task(self._worker('llm')), asyncio.create_task(self._worker('image'))]
@@ -215,7 +252,7 @@ class Pipeline:
             self.notify(stage, f'Starting {job["stem"]}')
             try:
                 if stage == 'llm':
-                    result = await asyncio.to_thread(finalize_prompt, job['draft'], json.loads(job['required']), session.config['llm'])
+                    result = await self.timed('llm', finalize_prompt, job['draft'], json.loads(job['required']), session.config['llm'])
                     prompt = compose_prompt(result)
                     session.update(job['id'], prompt=prompt, state='ready', error=None)
                     self.notify(stage, f'{job["stem"]} → ready queue')
@@ -231,6 +268,9 @@ class Pipeline:
                 # Stop dispatching after a service failure instead of failing the entire batch.
                 self.paused = True
             finally:
+                if stage == 'image':
+                    self.running.pop('original', None)
+                    self.running.pop('background', None)
                 self.active[stage] = None
                 self.changed.set()
 
@@ -240,6 +280,8 @@ class Pipeline:
         transparent_path = session.transparent_path(job)
         if not image_path.exists():
             comfy = dict(session.config['comfyui'])
+            phase_start = time.monotonic()
+            self.running['original'] = phase_start
             remote_id = job['remote_id']
             if remote_id:
                 comfy['url'] = job['remote_url']
@@ -250,10 +292,16 @@ class Pipeline:
             png_info(png)
             self._save(prompt_path, job['prompt'].encode('utf-8'))
             self._save(image_path, png)
+            session.originals.add(job['stem'])
+            if not job['remote_id']:
+                session.record_time('original', time.monotonic() - phase_start)
+            self.running.pop('original', None)
             self.notify('image', f'{job["stem"]}: original saved')
         if not transparent_path.exists():
             self.notify('image', f'{job["stem"]}: removing background')
             comfy = dict(session.config['comfyui'])
+            phase_start = time.monotonic()
+            self.running['background'] = phase_start
             remote_id = job['background_id']
             if remote_id:
                 comfy['url'] = job['background_url']
@@ -264,6 +312,9 @@ class Pipeline:
             if png_info(png, require_alpha=True) != png_info(image_path.read_bytes()):
                 raise ValueError('Transparent output dimensions do not match the original')
             self._save(transparent_path, png)
+            if not job['background_id']:
+                session.record_time('background', time.monotonic() - phase_start)
+            self.running.pop('background', None)
         session.update(job['id'], state='done', error=None)
 
     @staticmethod

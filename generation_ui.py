@@ -1,6 +1,7 @@
 """Textual dashboard for the persistent photo generation pipeline."""
 import asyncio
 import logging
+import time
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -8,6 +9,7 @@ from textual.widgets import Button, Footer, Header, ProgressBar, RichLog, Static
 
 from generation_session import Pipeline, Session
 from photo_id_generator import LOGGER
+from processing_estimates import duration
 
 
 class UILogHandler(logging.Handler):
@@ -33,6 +35,7 @@ class GenerationApp(App):
     .heading { height: 1; text-style: bold; color: #6de2ca; }
     .endpoint { display: none; height: 1; color: #9baebc; }
     .metrics { height: 2; }
+    .timing { height: 1; color: #9baebc; }
     .current { height: 1; color: #e8c884; }
     ProgressBar { width: 1fr; height: 1; }
     ProgressBar > Bar { width: 1fr; }
@@ -62,6 +65,8 @@ class GenerationApp(App):
         self.closing = False
         self.handler = None
         self.init_task = None
+        self.eta_cache = None
+        self.eta_updated = 0
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -78,6 +83,7 @@ class GenerationApp(App):
                     yield Static('Preparing…', id=f'{stage}-metrics', classes='metrics', markup=False)
                     yield ProgressBar(total=self.config['generation']['samples'], show_eta=False, id=f'{stage}-progress')
                     yield Static('Waiting', id=f'{stage}-current', classes='current', markup=False)
+                    yield Static('ETA: measuring…', id=f'{stage}-timing', classes='timing', markup=False)
                     yield RichLog(id=f'{stage}-log', wrap=True, min_width=1, max_lines=2000, markup=False)
         with Horizontal(id='controls'):
             yield Button('Pause', id='pause', variant='warning', disabled=True)
@@ -138,6 +144,20 @@ class GenerationApp(App):
             current = self.pipeline.active[stage]
             idle = 'Paused' if self.pipeline.paused else ('Complete' if (prompts if stage == 'llm' else done) == total else ('Waiting for queue space' if stage == 'llm' and ready >= self.session.capacity else 'Waiting for work'))
             self.query_one(f'#{stage}-current', Static).update(f'Working: {current}' if current else idle)
+        if self.eta_cache is None or time.monotonic() - self.eta_updated >= 1:
+            self.eta_cache = self.pipeline.estimates()
+            self.eta_updated = time.monotonic()
+        prompt_eta, image_eta, averages = self.eta_cache
+        for stage, eta, average in (
+            ('llm', prompt_eta, averages.get('llm')),
+            ('image', image_eta, (averages['original'] + averages['background'])
+             if 'original' in averages and 'background' in averages else None),
+        ):
+            label = 'On resume' if self.pipeline.paused else 'ETA'
+            complete = (prompts if stage == 'llm' else done) == total
+            value = 'complete' if complete else ('measuring…' if eta is None else f'~{duration(eta)}')
+            speed = '' if average is None else f' · avg {duration(average)}/'+('prompt' if stage == 'llm' else 'portrait')
+            self.query_one(f'#{stage}-timing', Static).update(f'{label}: {value}{speed}')
         self.query_one('#pause', Button).label = 'Resume' if self.pipeline.paused else 'Pause'
         self.query_one('#retry', Button).disabled = failed == 0 or self.closing
 
