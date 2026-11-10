@@ -87,11 +87,12 @@ def render_prompt(age, prompt_seed, template, llm):
     required = [
         f"{age} years old", data["gender"], data["skin"]["tone"], data["face"]["shape"],
         data["face"]["brow"], data["eyes"]["color"], data["skin"]["texture"],
-        data["skin"]["aging_note"], data["clothing"]["color"], data["clothing"]["outfit"],
+        data["skin"]["aging_note"], data["clothing"]["fit"], data["clothing"]["fabric"],
         data["face"]["forehead"], data["face"]["cheeks"], data["face"]["jaw"],
         data["face"]["nose"], data["face"]["mouth"], data["face"]["ear"],
         data["eyes"]["shape"], data["eyes"]["eyelids"], data["eyes"]["spacing"],
     ]
+    required.extend(f"{piece['color']} {piece['garment']}" for piece in data["clothing"]["pieces"])
     hair = data["hair"]
     if hair["style"] != "bald":
         required.extend(phrase for phrase in (hair["color"], hair["texture"], hair["style"], hair["gray_desc"]) if phrase)

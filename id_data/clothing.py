@@ -1,55 +1,60 @@
 import random
 
-OUTFITS_MEN_COMMON = [
-    "plain crew-neck t-shirt", "v-neck t-shirt", "graphic t-shirt", "long-sleeve t-shirt", "polo shirt", "rugby shirt", "henley shirt", "casual button-down shirt", "oxford cloth button-down shirt", "flannel shirt",
-    "chambray shirt", "crew-neck sweater", "v-neck sweater", "cardigan", "quarter-zip sweater", "hoodie", "zip-up hoodie", "sweatshirt", "lightweight jacket", "windbreaker", "track jacket", "denim shirt"
+from .clothing_colors import select_colors
+
+# Garments are restricted to the head-and-shoulders region.
+CASUAL_TOPS = [
+    "cotton crew-neck T-shirt", "cotton V-neck T-shirt", "cotton henley shirt",
+    "pique polo shirt", "linen band-collar shirt", "chambray button-down shirt",
+    "flannel shirt", "ribbed knit top", "boat-neck jersey top", "cotton sweatshirt",
+    "jersey mock-neck top", "rugby shirt", "waffle-knit shirt",
 ]
-
-OUTFITS_MEN_RARE = [
-    "turtleneck", "mock neck sweater", "shawl-collar cardigan", "cable-knit sweater", "denim jacket", "bomber jacket", "leather jacket", "suede jacket", "field jacket", "waxed jacket", "truck jacket", "overshirt jacket",
-    "tailored blazer", "double-breasted blazer", "sport coat", "tailored suit jacket", "three-piece suit", "tuxedo jacket", "overcoat", "trench coat", "pea coat", "hazmat suit", "welding helmet", "welding jacket",
-    "paramedic uniform", "surgeon gown", "surgical cap", "ceremonial military uniform", "judge robe", "graduation gown", "construction hi-vis vest", "construction hard hat", "work coveralls", "work cargo pants",
-    "steel-toe work boots", "tool belt", "mechanic coveralls", "mechanic work shirt", "warehouse safety vest", "delivery uniform polo", "security guard uniform shirt", "security guard uniform jacket", "chef coat",
-    "apron", "scrubs", "lab coat", "nurse uniform scrubs", "doctor white coat", "stethoscope", "firefighter turnout jacket", "police uniform shirt", "military camouflage uniform", "pilot uniform shirt",
-    "flight attendant uniform", "construction work jacket"
+KNIT_TOPS = [
+    "fine-knit turtleneck", "cable-knit sweater", "merino crew-neck sweater",
+    "V-neck wool sweater", "ribbed mock-neck sweater", "cotton knit polo",
 ]
-
-OUTFITS_WOMEN_COMMON = [
-    "plain crew-neck t-shirt", "v-neck t-shirt", "long-sleeve t-shirt", "ribbed knit top", "knit tank top", "camisole", "structured blouse", "button-down blouse", "wrap top", "peplum top", "cardigan over a camisole",
-    "cardigan", "crew-neck sweater", "v-neck sweater", "hoodie", "zip-up hoodie", "sweatshirt", "denim shirt", "flannel shirt", "lightweight jacket", "windbreaker", "track jacket", "nurse scrubs", "doctor white coat",
-    "lab coat", "chef coat", "apron", "construction hi-vis vest", "work coveralls", "steel-toe work boots", "warehouse safety vest", "delivery uniform polo", "security guard uniform shirt", "police uniform shirt",
-    "firefighter turnout jacket", "military camouflage uniform", "pilot uniform shirt", "flight attendant uniform"
+SMART_TOPS = [
+    "oxford button-down shirt", "poplin shirt", "linen shirt", "silk blouse",
+    "crepe blouse", "satin collared blouse", "cotton tunic with an embroidered neckline",
 ]
-
-OUTFITS_WOMEN_RARE = [
-    "silk blouse", "satin blouse", "v-neck knit top", "turtleneck", "mock neck sweater", "cashmere sweater", "shawl-collar cardigan", "denim jacket", "cropped jacket", "leather jacket", "suede jacket", "bomber jacket",
-    "field jacket", "tailored blazer", "classic blazer", "double-breasted blazer", "structured coat", "trench coat", "pea coat", "hazmat suit", "paramedic uniform", "surgeon gown", "surgical mask", "judge robe",
-    "ceremonial military uniform"
+OUTER_LAYERS = [
+    "open cotton cardigan", "unbuttoned denim jacket", "open corduroy overshirt",
+    "unzipped bomber jacket", "open chore jacket", "open knitted vest",
+    "open fleece jacket", "open quilted vest",
 ]
+SMART_LAYERS = [
+    "unbuttoned tailored blazer", "open tweed jacket", "open linen blazer",
+    "unbuttoned double-breasted blazer", "open wool cardigan",
+]
+WORK_TOPS = ["scrub top", "work shirt with chest pockets", "chef jacket", "utility coverall collar"]
+SURFACE_DETAILS = ["solid fabric", "fine vertical stripes", "small checks", "a subtle woven pattern"]
+FITS = ["regular fit", "relaxed fit", "close fit"]
 
-CLOTHING_CONDITIONS = ["new", "minimalist", "vintage", "retro", "classic", "modern"]
-COLOR_INTENSITIES = ["dull", "faded", "rich", "vivid", "light", "intense", "muted", "satin-finish"]
-CLOTHING_COLORS = ["Red", "Blue", "Yellow", "Green", "Orange", "Purple", "Pink", "Brown", "Black", "White", "Gray", "Cream", "Navy", "Burgundy", "Olive", "Teal"]
-FABRIC_DETAILS = ["no pattern", "subtle texture", "subtle pattern", "fine knit texture", "micro-check pattern", "heathered fabric"]
-FITS = ["tailored fit", "relaxed fit", "regular fit", "structured fit"]
 
+def get_clothing(gender=None, palette=None):
+    colors = select_colors(palette)
+    style = random.choice(["casual", "knitwear", "smart", "workwear"])
+    tops = {"casual": CASUAL_TOPS, "knitwear": KNIT_TOPS, "smart": SMART_TOPS, "workwear": WORK_TOPS}
+    outfit = random.choice(tops[style])
+    fit = random.choice(FITS)
+    fabric = random.choice(SURFACE_DETAILS) if style in ("casual", "smart") else "solid fabric"
+    pieces = [{"role": "base", "garment": outfit, "color": colors["base"]}]
 
-def get_clothing(gender):
-    rare_clothes = random.randint(1, 100) <= 25
-    if gender == "man":
-        outfit = random.choice(OUTFITS_MEN_RARE if rare_clothes else OUTFITS_MEN_COMMON)
-    else:
-        outfit = random.choice(OUTFITS_WOMEN_RARE if rare_clothes else OUTFITS_WOMEN_COMMON)
+    if style in ("casual", "smart") and random.random() < 0.65:
+        outer = random.choice(SMART_LAYERS if style == "smart" else OUTER_LAYERS)
+        pieces.append({"role": "outer", "garment": outer, "color": colors["outer"]})
 
-    has_layer = random.randint(1, 5) == 1
-    layer = random.choice(["a light scarf", "a simple neck gaiter", "a clean-lined cardigan layer", "a subtle lapel pin", "a small collar pin"]) if has_layer else ""
+    if style in ("casual", "knitwear", "smart") and random.random() < 0.3:
+        accessory = "loosely draped scarf below the chin"
+        if style == "smart" and outfit.endswith("shirt"):
+            accessory = random.choice(["narrow tie", accessory])
+        pieces.append({"role": "accessory", "garment": accessory, "color": colors["accent"]})
 
+    descriptions = [f"{piece['color']} {piece['garment']}" for piece in pieces]
     return {
-        "condition": random.choice(CLOTHING_CONDITIONS),
-        "outfit": outfit,
-        "intensity": random.choice(COLOR_INTENSITIES),
-        "color": random.choice(CLOTHING_COLORS),
-        "fit": random.choice(FITS),
-        "fabric": random.choice(FABRIC_DETAILS),
-        "layer": layer
+        "outfit": outfit, "color": colors["base"], "fit": fit, "fabric": fabric,
+        "condition": "clean", "intensity": "", "layer": ", ".join(descriptions[1:]),
+        "style": style, "palette": colors["strategy"], "pieces": pieces,
+        "description": f"{', '.join(descriptions)}, {fit}, base garment with {fabric}",
     }
+

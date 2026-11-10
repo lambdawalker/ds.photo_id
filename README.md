@@ -62,3 +62,16 @@ Face outlines are sampled uniformly across ten descriptive profiles. Each profil
 The template includes those sampled facial details. The LLM must preserve their phrases and exact age. Facial asymmetry and other optional facial details have a 25% sampling probability, and skin texture details use the existing 10% probability. These choices prioritize visual coverage. Only the age distribution is calibrated to U.S. Census counts.
 
 Face-outline terminology was cross-checked against the [LGBT Health and Wellbeing makeup guide](https://www.lgbthealth.org.uk/wp-content/uploads/2018/03/T-TIME-MAKE-UP-GUIDE.pdf). Rendering and visual review are needed to measure the diversity actually produced by the model.
+
+## Coordinated clothing
+
+Portraits sample casual, knitwear, smart and workwear outfits. Base garments, optional open layers and accessories receive separate colors from 24 curated palettes in four groups. These palettes are design choices for visual variety. Each garment/color pairing must survive the LLM rewrite.
+
+Preview reproducible combinations with the standalone script.
+
+```bash
+uv run --locked python preview_clothing.py --count 20 --seed 42
+uv run --locked python preview_clothing.py --count 10 --palette "muted contrast"
+```
+
+The preview prints JSON with garment roles, colors, palette names and the final clothing description. Available palette groups are neutral, tonal, muted contrast and bright accent.
