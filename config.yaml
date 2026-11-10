@@ -1,5 +1,5 @@
 comfyui:
-  url: http://127.0.0.1:8188
+  url: http://192.168.1.186:8188
   timeout_seconds: 600
 
 llm:
