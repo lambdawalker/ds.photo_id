@@ -22,11 +22,10 @@ The generator saves the original before running BiRefNet on the ComfyUI server. 
 
 ```text
 dataset/idPhoto/
-├── images/
-│   ├── original/
-│   │   └── photoId_00001.png
-│   └── transparent/
-│       └── photoId_00001.png
+├── original/
+│   └── photoId_00001.png
+├── transparent/
+│   └── photoId_00001.png
 ├── prompts/
 │   └── photoId_00001.txt
 └── session.sqlite3
@@ -55,7 +54,7 @@ The launchers open a Textual dashboard with separate prompt and image panels. Ea
 
 `generation.prompt_queue_size` limits the number of ready prompts waiting on images (default 64). When full, the LLM worker waits for space. A service error in the image worker pauses dispatch, displays the failure, and preserves the job for retry. LLM rewrite errors still fall back to the original validated template and appear in the prompt log.
 
-State lives in `session.sqlite3` beside `images/` and `prompts/`. Keep this file with the dataset to resume reliably. The publisher exports `image`, `image_transparent`, and `prompt`. A session lock prevents two processes writing the same output directory. Existing `img/` and `prompt/` directories are automatically moved to `images/original/` and `prompts/`; conflicting files stop migration rather than overwrite data. Existing originals are reused and queued for missing transparent versions. A portrait is complete only when both images and its prompt are saved. Batch size and seed must match the saved session.
+State lives in `session.sqlite3` beside `original/`, `transparent/`, and `prompts/`. Keep this file with the dataset to resume reliably. The publisher exports `image`, `image_transparent`, and `prompt`. A session lock prevents two processes writing the same output directory. Existing `img/` and `prompt/` directories are automatically moved to `original/` and `prompts/`; conflicting files stop migration rather than overwrite data. The previous nested `images/original/` and `images/transparent/` folders also migrate to the flat layout. Existing originals are reused and queued for missing transparent versions. A portrait is complete only when both images and its prompt are saved. Batch size and seed must match the saved session.
 
 ComfyUI submission IDs are saved immediately after acknowledgement, so restart and timeout retries retrieve that job instead of intentionally submitting it again. Keep the ComfyUI server/history available until downloads finish. An abrupt process kill in the small interval between server acceptance and acknowledgement can leave an orphan render on the server; local output still has one original, one transparent image and one prompt per sample. Save & exit avoids this interruption window. If the server has lost a saved job/history, let the retrieval time out, then use Shift+R to resubmit failed jobs. Active requests may take up to the configured service timeout (plus an in-progress HTTP request) to drain.
 

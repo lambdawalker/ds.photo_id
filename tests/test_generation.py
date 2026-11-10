@@ -94,7 +94,7 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
             self.pipeline.start()
             await until(lambda: self.session.counts().get('done') == 5)
             self.assertEqual(submit.call_count, 4)
-            self.assertEqual(len(list((self.session.output / 'images/original').glob('*.png'))), 5)
+            self.assertEqual(len(list((self.session.output / 'original').glob('*.png'))), 5)
             self.assertEqual(len(list((self.session.output / 'prompts').glob('*.txt'))), 5)
 
     async def test_save_exit_drains_inflight_without_dispatching_more(self):
@@ -186,7 +186,7 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
     async def test_legacy_folders_migrate_and_queue_missing_transparency(self):
         self.session.close()
         output = self.root / 'output'
-        (output / 'images/original').rename(output / 'img')
+        (output / 'original').rename(output / 'img')
         (output / 'prompts').rename(output / 'prompt')
         (output / 'img/photoId_00001.png').write_bytes(PNG)
         (output / 'prompt/photoId_00001.txt').write_text('Legacy prompt')
@@ -197,6 +197,22 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         job = self.session.next('ready')
         self.assertEqual(job['prompt'], 'Legacy prompt')
         self.assertEqual(self.session.paths(job)[0].read_bytes(), PNG)
+
+    async def test_nested_folders_migrate_without_regeneration(self):
+        self.session.close()
+        output = self.root / 'output'
+        (output / 'images').mkdir()
+        (output / 'original').rename(output / 'images/original')
+        (output / 'transparent').rename(output / 'images/transparent')
+        for variant in ('original', 'transparent'):
+            (output / 'images' / variant / 'photoId_00001.png').write_bytes(PNG)
+        (output / 'prompts/photoId_00001.txt').write_text('Saved prompt')
+        self.session = Session(self.config, self.root)
+        self.pipeline = Pipeline(self.session)
+        self.assertFalse((output / 'images').exists())
+        self.assertEqual(self.session.counts()['done'], 1)
+        for variant in ('original', 'transparent'):
+            self.assertEqual((output / variant / 'photoId_00001.png').read_bytes(), PNG)
 
     async def test_terminal_failure_clears_remote_id(self):
         with patch('generation_session.submit_image', return_value='bad-id'), patch('generation_session.wait_image', side_effect=ComfyGenerationError('bad workflow')):

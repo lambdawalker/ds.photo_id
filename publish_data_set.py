@@ -12,10 +12,10 @@ logger = logging.getLogger(__name__)
 def compile_photo_id_dataset(data_path: str) -> Dataset:
     """Pair each image with its original generation prompt."""
     features = Features({"image": Image(), "image_transparent": Image(), "prompt": Value("string")})
-    img_dir = os.path.join(data_path, "images", "original")
+    img_dir = os.path.join(data_path, "original")
     prompt_dir = os.path.join(data_path, "prompts")
 
-    transparent_dir = os.path.join(data_path, "images", "transparent")
+    transparent_dir = os.path.join(data_path, "transparent")
     for directory in (img_dir, transparent_dir, prompt_dir):
         if not os.path.isdir(directory):
             raise FileNotFoundError(f"Required directory not found: {directory}")
@@ -76,7 +76,7 @@ def main():
     parser = argparse.ArgumentParser(description="Compile and upload a Photo ID dataset to Hugging Face.")
 
     # Dataset arguments
-    parser.add_argument("--path", type=str, default="./dataset/idPhoto", help="Path to the root data directory containing images/original, images/transparent and prompts folders.")
+    parser.add_argument("--path", type=str, default="./dataset/idPhoto", help="Path to the root data directory containing original, transparent and prompts folders.")
     parser.add_argument("--user", type=str, default="lambdaWalker", help="Hugging Face username or organization.")
     parser.add_argument("--dataset_name", type=str, default="ds.photo_id", help="Name of the dataset repository.")
 

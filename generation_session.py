@@ -49,7 +49,7 @@ class Session:
                     if name not in columns:
                         self.db.execute(f'ALTER TABLE jobs ADD COLUMN {name} TEXT')
             self._migrate_layout()
-            for name in ('images/original', 'images/transparent', 'prompts'):
+            for name in ('original', 'transparent', 'prompts'):
                 (self.output / name).mkdir(parents=True, exist_ok=True)
             with self.db:
                 self.db.execute('INSERT OR IGNORE INTO meta VALUES(?,?)',
@@ -89,7 +89,8 @@ class Session:
 
     def _migrate_layout(self):
         # Restartable moves: never overwrite a different existing file.
-        for old, new in (('img', 'images/original'), ('prompt', 'prompts')):
+        for old, new in (('img', 'original'), ('images/original', 'original'),
+                         ('images/transparent', 'transparent'), ('prompt', 'prompts')):
             source, target = self.output / old, self.output / new
             if not source.exists():
                 continue
@@ -103,6 +104,9 @@ class Session:
                 else:
                     item.rename(destination)
             source.rmdir()
+        images = self.output / 'images'
+        if images.is_dir() and not any(images.iterdir()):
+            images.rmdir()
 
     def _reconcile_files(self):
         for job in self.db.execute('SELECT * FROM jobs').fetchall():
@@ -128,10 +132,10 @@ class Session:
                             background_id=None, background_url=None)
 
     def paths(self, job):
-        return self.output / 'images/original' / f'{job["stem"]}.png', self.output / 'prompts' / f'{job["stem"]}.txt'
+        return self.output / 'original' / f'{job["stem"]}.png', self.output / 'prompts' / f'{job["stem"]}.txt'
 
     def transparent_path(self, job):
-        return self.output / 'images/transparent' / f'{job["stem"]}.png'
+        return self.output / 'transparent' / f'{job["stem"]}.png'
 
     def update(self, job_id, **values):
         allowed = {'prompt', 'state', 'remote_id', 'remote_url', 'background_id', 'background_url', 'error'}
