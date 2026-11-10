@@ -44,11 +44,13 @@ Restarting upgrades completed prompts that have not been submitted and have no o
 
 The supplied configuration saves **WebP at quality 90** for both image variants. WebP supports lossy color compression with a lossless transparency channel. Configure `generation.image_storage.format` (`webp` or `png`), `quality` (0–100), and `lossless` (true/false). Encoding uses Pillow locally after PNG downloads; the ComfyUI graph needs no new image-saving nodes. Original WebP images are uploaded as WebP for removal. Changing the setting applies to missing/new images; existing PNGs remain intact and mixed PNG/WebP sessions resume normally. File paths and encoding settings are included in parameter JSON. The publisher and web explorer support both formats. Avoid keeping both PNG and WebP copies with the same stem in the same variant folder.
 
-For automated server-side deletion, install the small extension shipped here:
+Server cleanup is disabled by default. No token or extension is needed to generate images. Delete the downloaded jobs from the ComfyUI server manually when convenient; keep active jobs until the generator has saved both local image variants and their parameters JSON.
+
+If you later choose to enable automated server-side deletion, install the optional extension shipped here:
 
 1. Copy `comfyui_extensions/ds_photo_id_cleanup/` into `ComfyUI/custom_nodes/ds_photo_id_cleanup/` on the Spark.
 2. Set `PHOTO_ID_CLEANUP_TOKEN` to the same randomly generated secret in both the ComfyUI process environment and the generator process environment. For example, generate a token with `python -c "import secrets; print(secrets.token_urlsafe(32))"`. On Linux use `export PHOTO_ID_CLEANUP_TOKEN=YOUR_TOKEN` before starting ComfyUI; in PowerShell use `$env:PHOTO_ID_CLEANUP_TOKEN='YOUR_TOKEN'` before `run.bat`.
-3. Restart ComfyUI. Keep `comfyui.cleanup.enabled: true` in the generator configuration. The client environment variable name can be configured with `comfyui.cleanup.token_env`; the extension always reads `PHOTO_ID_CLEANUP_TOKEN`.
+3. Restart ComfyUI. Set `comfyui.cleanup.enabled: true` in the generator configuration. The client environment variable name can be configured with `comfyui.cleanup.token_env`; the extension always reads `PHOTO_ID_CLEANUP_TOKEN`.
 
 ComfyUI's standard history deletion does not remove image files. This extension adds authenticated `POST /photo-id/cleanup`, using saved job history to identify files. It only accepts this project's numbered outputs beneath `output/photo_id/` and its UUID-named uploaded inputs, with path checks that reject traversal and files outside those roots. It never accepts arbitrary filesystem paths from the client. Job history is retained for idempotent deletion retries until ComfyUI evicts it normally.
 

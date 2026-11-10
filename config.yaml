@@ -2,8 +2,7 @@ comfyui:
   url: http://192.168.1.186:8188
   timeout_seconds: 600
   cleanup:
-    enabled: true
-    token_env: PHOTO_ID_CLEANUP_TOKEN
+    enabled: false
 
 llm:
   enabled: true
