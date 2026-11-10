@@ -10,7 +10,7 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from id_data import generate_ages
 from photo_id_generator import (
-    ROOT, FRAMING, ComfyGenerationError, finalize_prompt, prepare_prompt,
+    ROOT, compose_prompt, ComfyGenerationError, finalize_prompt, prepare_prompt,
     submit_image, wait_image, submit_background, png_info,
 )
 
@@ -69,6 +69,11 @@ class Session:
                 self.db.execute("UPDATE jobs SET state='pending' WHERE state='prompting'")
                 self.db.execute("UPDATE jobs SET state='ready' WHERE state='rendering'")
             self._reconcile_files()
+            # Refresh only unsubmitted prompts without an existing original. In-flight
+            # jobs keep the exact prompt that produced their remote image.
+            for job in self.db.execute("SELECT * FROM jobs WHERE prompt IS NOT NULL AND remote_id IS NULL").fetchall():
+                if not self.paths(job)[0].exists():
+                    self.update(job['id'], prompt=compose_prompt(job['prompt']))
         except BaseException:
             self.close()
             raise
@@ -211,7 +216,7 @@ class Pipeline:
             try:
                 if stage == 'llm':
                     result = await asyncio.to_thread(finalize_prompt, job['draft'], json.loads(job['required']), session.config['llm'])
-                    prompt = f'{result} {FRAMING}'
+                    prompt = compose_prompt(result)
                     session.update(job['id'], prompt=prompt, state='ready', error=None)
                     self.notify(stage, f'{job["stem"]} → ready queue')
                 else:

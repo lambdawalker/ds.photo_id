@@ -18,10 +18,37 @@ from id_data import generate_sample_data
 
 ROOT = Path(__file__).resolve().parent
 LOGGER = logging.getLogger(__name__)
-FRAMING = (
+LEGACY_FRAMING = (
     "Photorealistic centered head-and-shoulders crop, eyes looking into the camera, "
     "face fully visible, plain light-gray background, even soft lighting."
 )
+
+
+FRAMING = (
+    "Photorealistic tight passport-style headshot, straight-on camera at eye level. "
+    "The centered head is the dominant subject: crown to chin occupies about two thirds "
+    "of the image height, with a small clear margin above the hair or headwear. "
+    "Keep the entire head and chin inside the frame. Show the neck and upper shoulders "
+    "at the bottom edge; the shoulders extend beyond the left and right edges. "
+    "Only the neckline and uppermost part of the clothing are visible. "
+    "Eyes look directly into the camera, head upright, face fully visible, "
+    "plain light-gray background, even soft lighting."
+)
+NEGATIVE_PROMPT = (
+    "3d render, illustration, full body, mid-body shot, waist-up shot, half-length portrait, "
+    "fashion editorial, wide shot, distant subject, small head, visible waist, visible hands, "
+    "cropped crown, cropped chin"
+)
+
+
+def compose_prompt(description):
+    """Put fixed composition first, outside the LLM's editable description."""
+    description = description.strip()
+    if description.startswith(FRAMING):
+        return description
+    if description.endswith(LEGACY_FRAMING):
+        description = description[:-len(LEGACY_FRAMING)].strip()
+    return f"{FRAMING} Subject details within this tight crop: {description}"
 
 
 def request_bytes(url, timeout, payload=None):
@@ -54,6 +81,8 @@ def finalize_prompt(draft, required_phrases, llm):
                     "Edit the provided synthetic ID headshot description into one concise English paragraph. "
                     "Keep the exact age and every supplied visual trait. Use the required phrases verbatim. "
                     "Do not add or replace traits, change the age, beautify the subject, or add framing. "
+                    "Describe clothing only as visible at the neckline and upper shoulders. "
+                    "Never introduce a wider view to display an outfit, scarf, or jacket. "
                     "Return only the edited portrait description."
                 ),
             },
@@ -126,12 +155,13 @@ def prepare_prompt(age, prompt_seed, template):
 
 def render_prompt(age, prompt_seed, template, llm):
     draft, required = prepare_prompt(age, prompt_seed, template)
-    return f"{finalize_prompt(draft, required, llm)} {FRAMING}"
+    return compose_prompt(finalize_prompt(draft, required, llm))
 
 
 def submit_image(workflow, prompt, seed, stem, comfyui):
     graph = copy.deepcopy(workflow)
     graph["452"]["inputs"]["prompt"] = prompt
+    graph["452"]["inputs"]["negative_prompt"] = NEGATIVE_PROMPT
     graph["458"]["inputs"]["seed"] = seed
     graph["461"]["inputs"]["filename_prefix"] = f"photo_id/{stem}"
 

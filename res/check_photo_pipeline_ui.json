@@ -112,13 +112,13 @@
         "Node name for S&R": "TextEncodeQwenImage21"
       },
       "widgets_values": [
-        "Photorealistic ID portrait of a fictional adult, 35 years old, short curly brown hair, navy cotton shirt, neutral expression, centered head-and-shoulders crop, plain light-gray background, even soft lighting.",
-        "3d render, illustration",
+        "Photorealistic tight passport-style headshot, straight-on camera at eye level. The centered head is the dominant subject: crown to chin occupies about two thirds of the image height, with a small clear margin above the hair or headwear. Keep the entire head and chin inside the frame. Show the neck and upper shoulders at the bottom edge; the shoulders extend beyond the left and right edges. Only the neckline and uppermost part of the clothing are visible. Eyes look directly into the camera, head upright, face fully visible, plain light-gray background, even soft lighting. Subject details within this tight crop: A fictional adult, 35 years old, short curly brown hair, navy cotton shirt.",
+        "3d render, illustration, full body, mid-body shot, waist-up shot, half-length portrait, fashion editorial, wide shot, distant subject, small head, visible waist, visible hands, cropped crown, cropped chin",
         1024
       ],
       "widgets_values_named": {
-        "prompt": "Photorealistic ID portrait of a fictional adult, 35 years old, short curly brown hair, navy cotton shirt, neutral expression, centered head-and-shoulders crop, plain light-gray background, even soft lighting.",
-        "negative_prompt": "3d render, illustration",
+        "prompt": "Photorealistic tight passport-style headshot, straight-on camera at eye level. The centered head is the dominant subject: crown to chin occupies about two thirds of the image height, with a small clear margin above the hair or headwear. Keep the entire head and chin inside the frame. Show the neck and upper shoulders at the bottom edge; the shoulders extend beyond the left and right edges. Only the neckline and uppermost part of the clothing are visible. Eyes look directly into the camera, head upright, face fully visible, plain light-gray background, even soft lighting. Subject details within this tight crop: A fictional adult, 35 years old, short curly brown hair, navy cotton shirt.",
+        "negative_prompt": "3d render, illustration, full body, mid-body shot, waist-up shot, half-length portrait, fashion editorial, wide shot, distant subject, small head, visible waist, visible hands, cropped crown, cropped chin",
         "resolution": 1024
       }
     },

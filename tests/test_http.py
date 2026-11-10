@@ -58,6 +58,7 @@ class HTTPTests(unittest.TestCase):
                 self.assertEqual(result, png)
                 graph = received['/prompt']['prompt']
                 self.assertEqual(graph['452']['inputs']['prompt'], prompt)
+                self.assertIn('waist-up shot', graph['452']['inputs']['negative_prompt'])
                 self.assertEqual(graph['458']['inputs']['seed'], 123)
                 self.assertEqual(graph['461']['inputs']['filename_prefix'], 'photo_id/photoId_00001')
                 self.assertNotEqual(workflow['452']['inputs']['prompt'], prompt)

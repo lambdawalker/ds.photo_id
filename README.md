@@ -31,6 +31,12 @@ dataset/idPhoto/
 └── session.sqlite3
 ```
 
+## ID portrait framing
+
+The positive prompt begins with fixed camera composition: a tight, straight-on headshot, crown-to-chin height around two thirds of the image, a small margin over the head, and upper shoulders reaching beyond the side edges. Clothing descriptions apply only to the neckline and upper shoulders. The LLM edits subject traits separately, then the fixed composition is prepended. Negative conditioning excludes waist-up, mid-body and distant shots.
+
+Restarting upgrades completed prompts that have not been submitted and have no original image yet. Submitted jobs and existing image/prompt records retain their original prompt. The full diagnostic UI workflow uses the same framing. These are model instructions rather than measured crop enforcement; review a small fresh batch on your server before generating the full dataset.
+
 ## Background removal setup
 
 On the **ComfyUI machine** (your DGX Spark), update ComfyUI to a build that includes `LoadBackgroundRemovalModel` and `RemoveBackground`. Download [birefnet.safetensors](https://huggingface.co/Comfy-Org/BiRefNet/resolve/main/background_removal/birefnet.safetensors) into `ComfyUI/models/background_removal/` and restart ComfyUI. No segmentation model is loaded by the Textual client.
