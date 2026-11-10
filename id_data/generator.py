@@ -14,8 +14,8 @@ def generate_sample_data(age):
 
     ancestry = get_ancestry()
     skin = get_skin(age, random.random() < 0.1)
-    eyes = get_eyes(random.random() < 0.1)
-    face = get_face(eyes["shape"], random.random() < 0.1)
+    eyes = get_eyes()
+    face = get_face(use_rare=random.random() < 0.25)
     hair = get_hair(gender, age)
     clothing = get_clothing(gender)
     metadata = get_metadata(gender)

@@ -45,7 +45,7 @@ def finalize_prompt(draft, required_phrases, llm):
     payload = {
         "model": llm["model"],
         "temperature": 0.1,
-        "max_tokens": 256,
+        "max_tokens": 512,
         "messages": [
             {
                 "role": "system",
@@ -68,7 +68,7 @@ def finalize_prompt(draft, required_phrases, llm):
         )
         candidate = response["choices"][0]["message"]["content"].strip()
         normalized = " ".join(candidate.casefold().split())
-        if not candidate or len(candidate.split()) > 125 or "\n" in candidate or "<think>" in normalized:
+        if not candidate or len(candidate.split()) > 260 or "\n" in candidate or "<think>" in normalized:
             raise ValueError("expected one short portrait paragraph")
         if any(phrase.casefold() not in normalized for phrase in required_phrases):
             raise ValueError("rewrite omitted a required trait")
@@ -88,12 +88,15 @@ def render_prompt(age, prompt_seed, template, llm):
         f"{age} years old", data["gender"], data["skin"]["tone"], data["face"]["shape"],
         data["face"]["brow"], data["eyes"]["color"], data["skin"]["texture"],
         data["skin"]["aging_note"], data["clothing"]["color"], data["clothing"]["outfit"],
+        data["face"]["forehead"], data["face"]["cheeks"], data["face"]["jaw"],
+        data["face"]["nose"], data["face"]["mouth"], data["face"]["ear"],
+        data["eyes"]["shape"], data["eyes"]["eyelids"], data["eyes"]["spacing"],
     ]
     hair = data["hair"]
     if hair["style"] != "bald":
         required.extend(phrase for phrase in (hair["color"], hair["texture"], hair["style"], hair["gray_desc"]) if phrase)
     required.extend(phrase for phrase in (
-        hair["baldness_note"], hair["facial_hair"],
+        hair["baldness_note"], hair["facial_hair"], data["face"]["detail"],
         data["metadata"]["glasses"], data["metadata"]["glare"],
         data["metadata"]["hat"] or data["metadata"]["extra_headwear"],
     ) if phrase)

@@ -1,18 +1,15 @@
 import random
 
-EYE_COLORS = ["Dark Brown", "Hazel", "Emerald Green", "Steel Blue", "Amber", "Grey", "Deep Blue", "Light Brown", "Icy Blue", "Golden Hazel"]
-
-EYE_SHAPES_COMMON = ["almond-shaped", "almond-shaped", "slightly hooded", "round", "deep-set", "upturned", "downturned", "wide-set", "close-set", "narrow"]
-EYE_SHAPES_RARE = ["monolid", "monolid"]
+EYE_COLORS = ["dark brown", "medium brown", "light brown", "hazel", "green", "blue", "gray", "amber"]
+EYE_SHAPES = ["almond-shaped", "rounded", "narrow", "gently upturned", "gently downturned"]
+EYELIDS = ["visible upper eyelid creases", "hooded upper eyelids", "monolid upper eyelids"]
+EYE_SPACING = ["average eye spacing", "slightly wide-set eyes", "slightly close-set eyes"]
 
 
 def get_eyes(use_rare=False):
-    color = random.choice(EYE_COLORS)
-    if use_rare:
-        shape = random.choice(EYE_SHAPES_RARE)
-    else:
-        shape = random.choice(EYE_SHAPES_COMMON)
     return {
-        "color": color,
-        "shape": shape
+        "color": random.choice(EYE_COLORS),
+        "shape": random.choice(EYE_SHAPES),
+        "eyelids": random.choice(EYELIDS),
+        "spacing": random.choice(EYE_SPACING),
     }

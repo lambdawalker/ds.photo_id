@@ -35,7 +35,7 @@ FEMALE_THINNING = [
 
 
 def get_hair(gender, age):
-    texture = random.choice(["straight", "wavy", "curly", "coily", "wavy", "curly"])
+    texture = random.choice(HAIR_TEXTURES)
     base_color = random.choice(HAIR_COLORS)
 
     gray_roll = random.randint(1, 100)

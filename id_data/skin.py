@@ -1,15 +1,8 @@
 import random
 
-SKIN_TONES = [
-    "very fair with neutral undertone",
-    "fair with warm undertone",
-    "light with olive undertone",
-    "medium with neutral undertone",
-    "medium with warm undertone",
-    "tan with golden undertone",
-    "deep with warm undertone",
-    "deep with neutral undertone"
-]
+SKIN_DEPTHS = ["very fair", "fair", "light", "medium", "tan", "brown", "deep brown", "very deep brown"]
+SKIN_UNDERTONES = ["neutral", "warm", "cool", "olive", "golden"]
+
 
 SKIN_TEXTURES_COMMON = [
     "smooth skin with natural pores",
@@ -22,12 +15,17 @@ SKIN_TEXTURES_COMMON = [
 
 SKIN_TEXTURES_RARE = [
     "slight freckles and natural pores",
-    "natural skin with faint sun-kissed speckling"
+    "natural skin with faint sun-kissed speckling",
+    "freckles across the nose and upper cheeks",
+    "a small flat cheek mole",
+    "subtle healed acne marks on the cheeks",
+    "a faint healed scar near one eyebrow",
+    "patches of lighter pigmentation around the mouth"
 ]
 
 
 def get_skin(age, use_rare=False):
-    skin_tone = random.choice(SKIN_TONES)
+    skin_tone = f"{random.choice(SKIN_DEPTHS)} with {random.choice(SKIN_UNDERTONES)} undertone"
 
     if use_rare:
         skin_texture = random.choice(SKIN_TEXTURES_RARE)

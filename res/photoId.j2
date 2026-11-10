@@ -1,3 +1,6 @@
 ID-style headshot of a {{ gender }} approximately {{ age }} years old, with {{ skin.tone }} skin, {{ face.shape }} facial contours{% if hair.style != "bald" %}, and {{ hair.color | lower }} {{ hair.texture }} hair styled as {{ hair.style }}{% if hair.gray_desc %} {{ hair.gray_desc }}{% endif %}{% endif %}.
-{{ face.brow | capitalize }}, {{ eyes.color }} eyes, and {{ skin.texture }}. {{ skin.aging_note | capitalize }}.
+Facial structure includes {{ face.forehead }}, {{ face.cheeks }}, and {{ face.jaw }}.
+{{ face.brow | capitalize }} above {{ eyes.color }} {{ eyes.shape }} eyes, with {{ eyes.eyelids }} and {{ eyes.spacing }}.
+The nose has {{ face.nose }}. They have {{ face.mouth }} and {{ face.ear }}.{% if face.detail %} There is {{ face.detail }}.{% endif %}
+Skin shows {{ skin.texture }}. {{ skin.aging_note | capitalize }}.
 {% if hair.baldness_note %}{{ hair.baldness_note | capitalize }}. {% endif %}{% if hair.facial_hair %}Facial hair: {{ hair.facial_hair }}. {% endif %}{% if metadata.glasses %}Wearing {{ metadata.glasses }}{% if metadata.glare %} {{ metadata.glare }}{% endif %}. {% endif %}{% if metadata.hat or metadata.extra_headwear %}Wearing {{ metadata.hat or metadata.extra_headwear }}. {% endif %}Clothing: {{ clothing.color | lower }} {{ clothing.outfit }}.
