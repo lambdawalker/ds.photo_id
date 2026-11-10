@@ -67,6 +67,7 @@ class GenerationApp(App):
         self.init_task = None
         self.eta_cache = None
         self.eta_updated = 0
+        self.dashboard = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -102,6 +103,16 @@ class GenerationApp(App):
         self.handler = UILogHandler(self)
         LOGGER.addHandler(self.handler)
         self.pipeline = Pipeline(self.session, self.record)
+        if self.config.get('web', {}).get('enabled', False):
+            from web_dashboard import Dashboard
+            self.dashboard = Dashboard(self.session, self.pipeline, self.config['web'])
+            try:
+                url = self.dashboard.start()
+                self.sub_title = url
+                self.record('image', f'Web dashboard: {url}')
+            except OSError as error:
+                self.dashboard = None
+                self.record('image', f'Web dashboard could not start: {error}')
         self.pipeline.start()
         self.query_one('#pause', Button).disabled = False
         self.query_one('#retry', Button).disabled = False
@@ -116,6 +127,8 @@ class GenerationApp(App):
         self.screen.set_class(event.size.width < 100, 'compact')
 
     def record(self, stage, message):
+        if self.dashboard:
+            self.dashboard.record(stage, message)
         self.query_one(f'#{stage}-log', RichLog).write(message)
 
     def refresh_progress(self):
@@ -214,5 +227,7 @@ class GenerationApp(App):
             await self.pipeline.stop()
         if self.handler:
             LOGGER.removeHandler(self.handler)
+        if self.dashboard:
+            await self.dashboard.close()
         if self.session:
             self.session.close()

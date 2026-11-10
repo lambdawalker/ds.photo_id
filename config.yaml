@@ -14,3 +14,8 @@ generation:
   seed: 42
   output_dir: dataset/idPhoto
   prompt_queue_size: 64
+
+web:
+  enabled: true
+  host: 127.0.0.1
+  port: 8765

@@ -81,6 +81,21 @@ Run the offline regression suite with:
 uv run --locked python -m unittest discover -s tests -v
 ```
 
+## Web dashboard
+
+The supplied configuration enables a browser companion at **http://127.0.0.1:8765** while the terminal app runs. Both interfaces control the same session and workers. The terminal header and image log show the dashboard URL. Set `web.enabled: false` to disable the companion, or change `web.port` if the port is already in use. The host defaults to the local machine; open the browser on the machine running this Python app.
+
+To run only the browser interface:
+
+```bash
+./run.sh --web
+# Windows: run.bat --web
+```
+
+Keep that command running and open the displayed URL. Use Ctrl+C in its console to drain active work and close the server; closing a browser tab leaves processing running. Terminal and browser modes acquire the same session lock, so launch one generator process and connect as many browser tabs as needed.
+
+The dashboard has separate prompt and image progress panels with ETAs, current jobs, scrolling logs and shared Pause/Resume and Retry controls. Logs update every second and preserve your scroll position when you scroll back. The dataset explorer shows the **latest four saved originals**, newest first, with matching transparent images on a checkerboard, prompts, and errors. Transparent versions appear as soon as removal finishes. Click either image for a full-size view. Existing generations remain available on restart; activity logs cover the current process only. The web server adds no Python dependencies and serves only the dashboard, its state and PNG image routes.
+
 ## Time estimates
 
 Each panel shows an ETA and average service time in one compact row. The image ETA estimates completion of the remaining batch, including original generation, background removal and prompt availability. The prompt ETA accounts for the bounded queue when image processing is slower. Estimates use the last 30 successful timings per stage, saved in the session database across restarts. Queue waits, idle periods and failures are excluded from those averages; retrieving already-submitted remote jobs does not train a new image-stage average.

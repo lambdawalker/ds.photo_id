@@ -242,13 +242,21 @@ def generate_image(workflow, prompt, seed, stem, comfyui):
 def main():
     parser = argparse.ArgumentParser(description="Generate synthetic portraits with Qwen Image 2.1.")
     parser.add_argument("--config", type=Path, default=ROOT / "config.yaml")
+    parser.add_argument("--web", action="store_true", help="Run the browser dashboard without the terminal UI")
     args = parser.parse_args()
     with args.config.open(encoding="utf-8") as file:
         config = yaml.safe_load(file)
 
-    from generation_ui import GenerationApp
-
-    GenerationApp(config, args.config.resolve().parent).run()
+    if args.web:
+        import asyncio
+        from web_dashboard import run_web
+        try:
+            asyncio.run(run_web(config, args.config.resolve().parent))
+        except KeyboardInterrupt:
+            pass
+    else:
+        from generation_ui import GenerationApp
+        GenerationApp(config, args.config.resolve().parent).run()
 
 
 if __name__ == "__main__":
