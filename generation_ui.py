@@ -1,0 +1,196 @@
+"""Textual dashboard for the persistent photo generation pipeline."""
+import asyncio
+import logging
+
+from textual.app import App, ComposeResult
+from textual.containers import Horizontal, Vertical
+from textual.widgets import Button, Footer, Header, ProgressBar, RichLog, Static
+
+from generation_session import Pipeline, Session
+from photo_id_generator import LOGGER
+
+
+class UILogHandler(logging.Handler):
+    def __init__(self, app):
+        super().__init__(logging.WARNING)
+        self.app = app
+        self.loop = asyncio.get_running_loop()
+
+    def emit(self, record):
+        self.loop.call_soon_threadsafe(self.app.record, 'llm', record.getMessage())
+
+
+class GenerationApp(App):
+    TITLE = 'Portrait Studio'
+    SUB_TITLE = 'Qwen Image · persistent generation queue'
+    CSS = '''
+    Screen { background: #101820; color: #dce6ed; }
+    Header { background: #1b2b38; }
+    #summary { height: 3; padding: 1 2 0 2; color: #6de2ca; }
+    #location { height: 2; padding: 0 2; color: #9baebc; }
+    #panels { height: 1fr; padding: 0 1; overflow-y: auto; }
+    .panel { width: 1fr; margin: 0 1; border: round #39556a; padding: 1 2; }
+    .heading { height: 2; text-style: bold; color: #6de2ca; }
+    .endpoint { height: 2; color: #9baebc; }
+    .metrics { height: 3; }
+    .current { height: 3; color: #e8c884; }
+    ProgressBar { width: 1fr; height: 2; }
+    ProgressBar > Bar { width: 1fr; }
+    RichLog { height: 1fr; background: #14212b; border-top: solid #39556a; }
+    #controls { height: 5; align-horizontal: center; padding: 1; }
+    Button { margin: 0 1; }
+    Footer { background: #1b2b38; }
+    .compact #panels { layout: vertical; }
+    .compact .panel { width: 1fr; height: 1fr; min-height: 18; padding: 0 1; }
+    .compact .endpoint { height: 1; }
+    .compact .current { height: 2; }
+    .compact .metrics { height: 2; }
+    '''
+    BINDINGS = [
+        ('space', 'toggle_pause', 'Pause / resume'),
+        ('r', 'retry', 'Retry failures'),
+        ('shift+r', 'resubmit', 'Resubmit lost jobs'),
+        ('q', 'save_exit', 'Save & exit'),
+        ('ctrl+c', 'save_exit', 'Save & exit'),
+    ]
+
+    def __init__(self, config, config_dir):
+        super().__init__()
+        self.config = config
+        self.config_dir = config_dir
+        self.session = None
+        self.pipeline = None
+        self.closing = False
+        self.handler = None
+        self.init_task = None
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        yield Static('Preparing saved session…', id='summary', markup=False)
+        yield Static(str(self.config_dir / self.config['generation']['output_dir']), id='location', markup=False)
+        with Horizontal(id='panels'):
+            for stage, title, endpoint in (
+                ('llm', '01  PROMPT GENERATION', self.config['llm']['url'] if self.config['llm']['enabled'] else 'Template mode · LLM disabled'),
+                ('image', '02  IMAGE GENERATION', self.config['comfyui']['url']),
+            ):
+                with Vertical(classes='panel'):
+                    yield Static(title, classes='heading')
+                    yield Static(endpoint, classes='endpoint', markup=False)
+                    yield Static('Preparing…', id=f'{stage}-metrics', classes='metrics', markup=False)
+                    yield ProgressBar(total=self.config['generation']['samples'], show_eta=False, id=f'{stage}-progress')
+                    yield Static('Waiting', id=f'{stage}-current', classes='current', markup=False)
+                    yield RichLog(id=f'{stage}-log', wrap=True, min_width=1, max_lines=300, markup=False)
+        with Horizontal(id='controls'):
+            yield Button('Pause', id='pause', variant='warning', disabled=True)
+            yield Button('Retry failures', id='retry', disabled=True)
+            yield Button('Save & exit', id='exit', variant='primary')
+        yield Footer()
+
+    async def on_mount(self):
+        # Sample/snapshot the batch without freezing the UI during initialization.
+        self.init_task = asyncio.create_task(asyncio.to_thread(Session, self.config, self.config_dir))
+        try:
+            self.session = await self.init_task
+        except Exception as error:
+            self.query_one('#summary', Static).update(f'Cannot open session: {error}')
+            return
+        self.handler = UILogHandler(self)
+        LOGGER.addHandler(self.handler)
+        self.pipeline = Pipeline(self.session, self.record)
+        self.pipeline.start()
+        self.query_one('#pause', Button).disabled = False
+        self.query_one('#retry', Button).disabled = False
+        self.record('llm', 'Session loaded. Saved prompts and seeds are reused.')
+        self.record('image', 'Completed pairs are skipped; submitted ComfyUI jobs are recovered.')
+        for job in self.session.db.execute("SELECT stem,prompt,error FROM jobs WHERE state='failed' LIMIT 20"):
+            self.record('llm' if job['prompt'] is None else 'image', f'{job["stem"]}: {job["error"]}')
+        self.set_interval(0.2, self.refresh_progress)
+        self.refresh_progress()
+
+    def on_resize(self, event):
+        self.screen.set_class(event.size.width < 100, 'compact')
+
+    def record(self, stage, message):
+        self.query_one(f'#{stage}-log', RichLog).write(message)
+
+    def refresh_progress(self):
+        if not self.pipeline:
+            return
+        counts = self.session.counts()
+        total = self.config['generation']['samples']
+        prompts = self.session.db.execute('SELECT COUNT(*) FROM jobs WHERE prompt IS NOT NULL').fetchone()[0]
+        done, ready, failed = (counts.get(key, 0) for key in ('done', 'ready', 'failed'))
+        llm_failed = self.session.db.execute("SELECT COUNT(*) FROM jobs WHERE state='failed' AND prompt IS NULL").fetchone()[0]
+        active = any(self.pipeline.active.values())
+        if self.closing:
+            status = 'Saving — waiting for active requests to finish…'
+        elif self.pipeline.paused:
+            status = 'Pausing — finishing active requests…' if active else 'Paused — safe to exit and resume later'
+        elif done == total:
+            status = 'Complete — all image / prompt pairs saved'
+        else:
+            status = 'Running — prompt and image workers operate concurrently'
+        self.query_one('#summary', Static).update(status)
+        self.query_one('#llm-metrics', Static).update(f'{prompts:,} / {total:,} prompts prepared\nReady queue: {ready:,} / {self.session.capacity:,} · Failures: {llm_failed:,}')
+        self.query_one('#image-metrics', Static).update(f'{done:,} / {total:,} images saved\nFailures: {failed - llm_failed:,} · In flight: {int(bool(self.pipeline.active["image"]))}')
+        self.query_one('#llm-progress', ProgressBar).update(progress=prompts)
+        self.query_one('#image-progress', ProgressBar).update(progress=done)
+        for stage in ('llm', 'image'):
+            current = self.pipeline.active[stage]
+            idle = 'Paused' if self.pipeline.paused else ('Complete' if (prompts if stage == 'llm' else done) == total else ('Waiting for queue space' if stage == 'llm' and ready >= self.session.capacity else 'Waiting for work'))
+            self.query_one(f'#{stage}-current', Static).update(f'Working: {current}' if current else idle)
+        self.query_one('#pause', Button).label = 'Resume' if self.pipeline.paused else 'Pause'
+        self.query_one('#retry', Button).disabled = failed == 0 or self.closing
+
+    def action_toggle_pause(self):
+        if self.pipeline and not self.closing:
+            self.pipeline.resume() if self.pipeline.paused else self.pipeline.pause()
+            self.refresh_progress()
+
+    def action_retry(self):
+        if self.pipeline and not self.closing:
+            self.pipeline.retry()
+            self.pipeline.resume()
+            self.record('image', 'Failed jobs requeued; saved prompts are retained.')
+            self.refresh_progress()
+
+    def action_resubmit(self):
+        if self.pipeline and not self.closing:
+            self.pipeline.retry(resubmit=True)
+            self.pipeline.resume()
+            self.record('image', 'Failed jobs will be submitted again with their saved prompts and seeds.')
+            self.refresh_progress()
+
+    async def action_save_exit(self):
+        if self.closing:
+            return
+        self.closing = True
+        self.query_one('#pause', Button).disabled = True
+        self.query_one('#retry', Button).disabled = True
+        if self.init_task and not self.init_task.done():
+            self.query_one('#summary', Static).update('Finishing session initialization before exit…')
+            try:
+                await self.init_task
+            except Exception:
+                pass
+        if self.pipeline:
+            self.refresh_progress()
+            await self.pipeline.stop()
+        self.exit()
+
+    async def on_button_pressed(self, event: Button.Pressed):
+        if event.button.id == 'pause':
+            self.action_toggle_pause()
+        elif event.button.id == 'retry':
+            self.action_retry()
+        elif event.button.id == 'exit':
+            await self.action_save_exit()
+
+    async def on_unmount(self):
+        # Also drain workers if Textual exits through another route.
+        if self.pipeline:
+            await self.pipeline.stop()
+        if self.handler:
+            LOGGER.removeHandler(self.handler)
+        if self.session:
+            self.session.close()

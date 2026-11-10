@@ -11,9 +11,8 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 import yaml
-from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
-from id_data import generate_ages, generate_sample_data
+from id_data import generate_sample_data
 
 ROOT = Path(__file__).resolve().parent
 LOGGER = logging.getLogger(__name__)
@@ -99,7 +98,7 @@ def finalize_prompt(draft, required_phrases, llm):
         return draft
 
 
-def render_prompt(age, prompt_seed, template, llm):
+def prepare_prompt(age, prompt_seed, template):
     random.seed(prompt_seed)
     data = generate_sample_data(age)
     draft = " ".join(template.render(**data).split())
@@ -120,28 +119,42 @@ def render_prompt(age, prompt_seed, template, llm):
         data["metadata"]["glasses"], data["metadata"]["glare"],
         data["metadata"]["hat"] or data["metadata"]["extra_headwear"],
     ) if phrase)
+    return draft, required
+
+
+def render_prompt(age, prompt_seed, template, llm):
+    draft, required = prepare_prompt(age, prompt_seed, template)
     return f"{finalize_prompt(draft, required, llm)} {FRAMING}"
 
 
-def generate_image(workflow, prompt, seed, stem, comfyui):
+def submit_image(workflow, prompt, seed, stem, comfyui):
     graph = copy.deepcopy(workflow)
     graph["452"]["inputs"]["prompt"] = prompt
     graph["458"]["inputs"]["seed"] = seed
     graph["461"]["inputs"]["filename_prefix"] = f"photo_id/{stem}"
 
     url = comfyui["url"].rstrip("/")
-    deadline = time.monotonic() + comfyui["timeout_seconds"]
     queued = request_json(f"{url}/prompt", 30, {"prompt": graph})
     prompt_id = queued.get("prompt_id")
     if not prompt_id:
         raise RuntimeError(f"ComfyUI rejected the workflow: {queued}")
 
+    return prompt_id
+
+
+class ComfyGenerationError(RuntimeError):
+    """A server-reported terminal failure; retry needs a new submission."""
+
+
+def wait_image(prompt_id, stem, comfyui):
+    url = comfyui["url"].rstrip("/")
+    deadline = time.monotonic() + comfyui["timeout_seconds"]
     while time.monotonic() < deadline:
         history = request_json(f"{url}/history/{prompt_id}", 30).get(prompt_id)
         if history:
             status = history.get("status", {})
             if status.get("status_str") == "error":
-                raise RuntimeError(f"ComfyUI generation failed for {stem}: {status.get('messages')}")
+                raise ComfyGenerationError(f"ComfyUI generation failed for {stem}: {status.get('messages')}")
             images = history.get("outputs", {}).get("461", {}).get("images", [])
             if len(images) != 1:
                 raise RuntimeError(f"Expected one ComfyUI output for {stem}, got {len(images)}")
@@ -156,6 +169,10 @@ def generate_image(workflow, prompt, seed, stem, comfyui):
     raise TimeoutError(f"ComfyUI did not finish {stem} within the configured timeout")
 
 
+def generate_image(workflow, prompt, seed, stem, comfyui):
+    return wait_image(submit_image(workflow, prompt, seed, stem, comfyui), stem, comfyui)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generate synthetic portraits with Qwen Image 2.1.")
     parser.add_argument("--config", type=Path, default=ROOT / "config.yaml")
@@ -163,38 +180,10 @@ def main():
     with args.config.open(encoding="utf-8") as file:
         config = yaml.safe_load(file)
 
-    generation = config["generation"]
-    output = args.config.resolve().parent / generation["output_dir"]
-    image_dir, prompt_dir = output / "img", output / "prompt"
-    for directory in (image_dir, prompt_dir):
-        directory.mkdir(parents=True, exist_ok=True)
+    from generation_ui import GenerationApp
 
-    env = Environment(loader=FileSystemLoader(ROOT / "res"), undefined=StrictUndefined)
-    template = env.get_template("photoId.j2")
-    workflow = json.loads((ROOT / "res/qwen_image_2_1_api.json").read_text(encoding="utf-8"))
-    seed = generation["seed"]
-    ages = generate_ages(generation["samples"], seed=seed)
-    sample_seeds = random.Random(seed)
-
-    for index, age in enumerate(ages, start=1):
-        prompt_seed = sample_seeds.getrandbits(64)
-        image_seed = sample_seeds.getrandbits(53)
-        stem = f"photoId_{index:05d}"
-        image_path, prompt_path = image_dir / f"{stem}.png", prompt_dir / f"{stem}.txt"
-        if image_path.is_file():
-            if not prompt_path.is_file():
-                raise RuntimeError(f"Existing image has no saved prompt: {image_path}")
-            continue
-
-        LOGGER.info("Generating %s (%d/%d)", stem, index, len(ages))
-        prompt = render_prompt(age, prompt_seed, template, config["llm"])
-        png = generate_image(workflow, prompt, image_seed, stem, config["comfyui"])
-        temporary_image = image_path.with_suffix(".png.tmp")
-        temporary_image.write_bytes(png)
-        prompt_path.write_text(prompt, encoding="utf-8")
-        temporary_image.replace(image_path)
+    GenerationApp(config, args.config.resolve().parent).run()
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     main()

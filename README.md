@@ -15,7 +15,7 @@ On Linux or macOS, run `./run.sh`. On Windows, run `run.bat` (or `.\run.bat` in 
 
 Edit `config.yaml` to set the ComfyUI URL, the local LLM's OpenAI-compatible API base URL and model ID, and the batch size, seed, and output directory. For a smoke test, set `generation.samples` to a small number and use a separate output directory. Set `llm.enabled: false` to use the template directly.
 
-The external LLM edits the sampled description at low temperature. The generator checks that the sampled phrases and exact age survive, falls back to the template on a failed check or request, and appends the fixed framing. The API graph bypasses the supplied editor workflow's optional in-graph prompt refiner and uses the built-in PNG saver. Seeds are repeatable for the same batch settings. Use a fresh output directory when changing the batch size, seed, workflow, or prompt settings because reruns skip existing image/prompt pairs.
+The external LLM edits the sampled description at low temperature. The generator checks that the sampled phrases and exact age survive, falls back to the template on a failed check or request, and appends the fixed framing. The API graph bypasses the supplied editor workflow's optional in-graph prompt refiner and uses the built-in PNG saver. Seeds are repeatable for the same batch settings. Each output directory is a resumable session. Its sampled descriptions, required traits, image seeds, completed prompts, and workflow are saved once. Use a fresh output directory to change batch size, seed, workflow, or sampled prompt settings. Endpoint settings can be changed between runs; an already-submitted image is polled on its original server.
 
 The generator writes the downloaded image and the exact positive prompt sent to ComfyUI. Files are paired by stem.
 
@@ -25,6 +25,29 @@ dataset/idPhoto/
 │   └── photoId_00001.png
 └── prompt/
     └── photoId_00001.txt
+```
+
+## Generation dashboard
+
+The launchers open a Textual dashboard with separate prompt and image panels. Each panel shows progress, its current job and a scrolling activity log. Panels stack on narrower terminals. The LLM worker prepares prompts while the ComfyUI worker renders the previous completed prompt. Blocking HTTP requests run on separate threads, leaving the UI responsive. Only one image is submitted at a time.
+
+| Control | Action |
+| --- | --- |
+| **Space** / Pause / Resume | Stop taking new jobs; active requests finish and save their results. Resume continues both workers. |
+| **R** / Retry failures | Requeue failed jobs and resume. Existing prompts and ComfyUI job IDs are retained. |
+| **Shift+R** | Resubmit failed jobs with their saved prompts and seeds if ComfyUI lost their history. May duplicate server work if the old job is still running. |
+| **Q**, **Ctrl+C** / Save & exit | Finish active requests, save state, and close. Run the same command later to resume automatically. |
+
+`generation.prompt_queue_size` limits the number of ready prompts waiting on images (default 64). When full, the LLM worker waits for space. A service error in the image worker pauses dispatch, displays the failure, and preserves the job for retry. LLM rewrite errors still fall back to the original validated template and appear in the prompt log.
+
+State lives in `session.sqlite3` beside `img/` and `prompt/`. Keep this file with the dataset to resume reliably. The publisher still exports only image and prompt. A session lock prevents two processes writing the same output directory. Existing valid image/prompt pairs are imported and skipped. Batch size and seed must match the saved session.
+
+ComfyUI submission IDs are saved immediately after acknowledgement, so restart and timeout retries retrieve that job instead of intentionally submitting it again. Keep the ComfyUI server/history available until downloads finish. An abrupt process kill in the small interval between server acceptance and acknowledgement can leave an orphan render on the server; local output still has one pair per sample. Save & exit avoids this interruption window. If the server has lost a saved job/history, let the retrieval time out, then use Shift+R to resubmit failed jobs. Active requests may take up to the configured service timeout (plus an in-progress HTTP request) to drain.
+
+Run the offline regression suite with:
+
+```bash
+uv run --locked python -m unittest discover -s tests -v
 ```
 
 ## Age distribution
