@@ -4,6 +4,7 @@ import json
 import random
 import sqlite3
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from filelock import FileLock
@@ -13,7 +14,7 @@ from id_data import generate_ages
 from processing_estimates import estimate, rolling_averages
 from photo_id_generator import (
     ROOT, compose_prompt, ComfyGenerationError, finalize_prompt, prepare_prompt,
-    submit_image, wait_image, submit_background, png_info,
+    submit_image, wait_image, submit_background, png_info, build_image_graph,
 )
 
 
@@ -50,11 +51,11 @@ class Session:
             ''')
             columns = {row['name'] for row in self.db.execute('PRAGMA table_info(jobs)')}
             with self.db:
-                for name in ('background_id', 'background_url'):
+                for name in ('background_id', 'background_url', 'parameters'):
                     if name not in columns:
                         self.db.execute(f'ALTER TABLE jobs ADD COLUMN {name} TEXT')
             self._migrate_layout()
-            for name in ('original', 'transparent', 'prompts'):
+            for name in ('original', 'transparent', 'prompts', 'parameters'):
                 (self.output / name).mkdir(parents=True, exist_ok=True)
             with self.db:
                 self.db.execute('INSERT OR IGNORE INTO meta VALUES(?,?)',
@@ -80,6 +81,9 @@ class Session:
             for job in self.db.execute("SELECT * FROM jobs WHERE prompt IS NOT NULL AND remote_id IS NULL").fetchall():
                 if not self.paths(job)[0].exists():
                     self.update(job['id'], prompt=compose_prompt(job['prompt']))
+            for job in self.db.execute('SELECT id,stem FROM jobs').fetchall():
+                if job['stem'] in self.originals:
+                    self.write_parameters(job['id'])
         except BaseException:
             self.close()
             raise
@@ -91,9 +95,17 @@ class Session:
         with self.db:
             for i, age in enumerate(generate_ages(settings['samples'], seed=settings['seed']), 1):
                 prompt_seed, image_seed = rng.getrandbits(64), rng.getrandbits(53)
-                draft, required = prepare_prompt(age, prompt_seed, template)
-                self.db.execute('INSERT INTO jobs(id,stem,image_seed,draft,required) VALUES(?,?,?,?,?)',
-                                (i, f'photoId_{i:05d}', image_seed, draft, json.dumps(required)))
+                draft, required, sample = prepare_prompt(age, prompt_seed, template, include_data=True)
+                metadata = {'sample': sample, 'prompt_seed': prompt_seed, 'batch': settings,
+                            'provenance': 'captured_at_sampling'}
+                if (self.output / 'original' / f'photoId_{i:05d}.png').is_file():
+                    # Importing files without a journal cannot establish their old inputs.
+                    draft, required = '', []
+                    metadata = {'sample': None, 'prompt_seed': None, 'batch': None,
+                                'image_seed_unknown': True, 'provenance': 'legacy_partial',
+                                'missing_history': 'Images imported without their generation journal; original traits, seeds and execution settings are unknown.'}
+                self.db.execute('INSERT INTO jobs(id,stem,image_seed,draft,required,parameters) VALUES(?,?,?,?,?,?)',
+                                (i, f'photoId_{i:05d}', image_seed, draft, json.dumps(required), json.dumps(metadata)))
             self.db.executemany('INSERT INTO meta VALUES(?,?)', [
                 ('settings', json.dumps(settings)), ('workflow', workflow),
             ])
@@ -149,7 +161,7 @@ class Session:
         return self.output / 'transparent' / f'{job["stem"]}.png'
 
     def update(self, job_id, **values):
-        allowed = {'prompt', 'state', 'remote_id', 'remote_url', 'background_id', 'background_url', 'error'}
+        allowed = {'prompt', 'state', 'remote_id', 'remote_url', 'background_id', 'background_url', 'error', 'parameters'}
         if not values or not values.keys() <= allowed:
             raise ValueError('Invalid job update')
         with self.db:
@@ -167,6 +179,33 @@ class Session:
             if resubmit:
                 self.db.execute("UPDATE jobs SET remote_id=NULL, remote_url=NULL, background_id=NULL, background_url=NULL WHERE state='failed'")
             self.db.execute("UPDATE jobs SET state=CASE WHEN prompt IS NULL THEN 'pending' ELSE 'ready' END, error=NULL WHERE state='failed'")
+
+    def capture_parameters(self, job_id, **values):
+        row = self.db.execute('SELECT parameters FROM jobs WHERE id=?', (job_id,)).fetchone()
+        metadata = json.loads(row['parameters']) if row['parameters'] else {
+            'sample': None, 'prompt_seed': None, 'batch': None,
+            'provenance': 'legacy_partial',
+            'missing_history': 'Structured traits, prompt seed and execution settings were not saved by the older generator.'}
+        metadata.update(values)
+        self.update(job_id, parameters=json.dumps(metadata))
+        self.write_parameters(job_id)
+
+    def write_parameters(self, job_id):
+        job = self.db.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone()
+        metadata = json.loads(job['parameters']) if job['parameters'] else {
+            'sample': None, 'prompt_seed': None, 'batch': None,
+            'provenance': 'legacy_partial',
+            'missing_history': 'Structured traits, prompt seed and execution settings were not saved by the older generator.'}
+        record = {**metadata, 'schema_version': 1, 'id': job['stem'],
+                  'image_seed': None if metadata.get('image_seed_unknown') else job['image_seed'], 'draft_prompt': job['draft'],
+                  'required_phrases': json.loads(job['required']), 'prompt': job['prompt'],
+                  'files': {'original': f'original/{job["stem"]}.png',
+                            'transparent': f'transparent/{job["stem"]}.png',
+                            'prompt': f'prompts/{job["stem"]}.txt'}}
+        path = self.output / 'parameters' / f'{job["stem"]}.json'
+        temporary = path.with_suffix('.json.tmp')
+        temporary.write_text(json.dumps(record, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+        temporary.replace(path)
 
     def record_time(self, stage, seconds):
         with self.db:
@@ -255,6 +294,12 @@ class Pipeline:
                     result = await self.timed('llm', finalize_prompt, job['draft'], json.loads(job['required']), session.config['llm'])
                     prompt = compose_prompt(result)
                     session.update(job['id'], prompt=prompt, state='ready', error=None)
+                    session.capture_parameters(job['id'], prompt_finalization={
+                        'enabled': session.config['llm']['enabled'],
+                        'model': session.config['llm'].get('model'),
+                        'api': session.config['llm'].get('api', 'openai'),
+                        'temperature': 0.1, 'thinking': False,
+                        'result': 'template' if result == job['draft'] else 'rewritten'})
                     self.notify(stage, f'{job["stem"]} → ready queue')
                 else:
                     await self._image(job)
@@ -286,6 +331,8 @@ class Pipeline:
             if remote_id:
                 comfy['url'] = job['remote_url']
             else:
+                session.capture_parameters(job['id'], image_seed_unknown=False, image_requested_at=datetime.now(timezone.utc).isoformat(), image_workflow=build_image_graph(
+                    session.workflow, job['prompt'], job['image_seed'], job['stem']))
                 remote_id = await asyncio.to_thread(submit_image, session.workflow, job['prompt'], job['image_seed'], job['stem'], comfy)
                 session.update(job['id'], remote_id=remote_id, remote_url=comfy['url'])
             png = await asyncio.to_thread(wait_image, remote_id, job['stem'], comfy)
@@ -306,6 +353,9 @@ class Pipeline:
             if remote_id:
                 comfy['url'] = job['background_url']
             else:
+                session.capture_parameters(job['id'], background_removal={
+                    'workflow': session.background_workflow,
+                    'source': f'original/{job["stem"]}.png'})
                 remote_id = await asyncio.to_thread(submit_background, session.background_workflow, image_path, comfy)
                 session.update(job['id'], background_id=remote_id, background_url=comfy['url'])
             png = await asyncio.to_thread(wait_image, remote_id, job['stem'], comfy, '6')

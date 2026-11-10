@@ -40,6 +40,7 @@ class DashboardTests(unittest.IsolatedAsyncioTestCase):
             self.session.originals.add(job['stem'])
             if i == 5:
                 self.session.transparent_path(job).write_bytes(PNG)
+        self.session.write_parameters(5)
         self.dashboard.record('llm', '<script>untrusted prompt</script>')
         body, _ = await self.request('/api/state')
         state = json.loads(body)
@@ -48,6 +49,8 @@ class DashboardTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(state['latest'][0]['transparent'])
         self.assertIsNone(state['latest'][1]['transparent'])
         self.assertEqual(state['latest'][0]['prompt'], 'Exact prompt 5')
+        metadata, _ = await self.request(state['latest'][0]['parameters'])
+        self.assertEqual(json.loads(metadata)['id'], 'photoId_00005')
         image, kind = await self.request(state['latest'][0]['transparent'])
         self.assertEqual((image, kind), (PNG, 'image/png'))
         self.assertEqual(state['logs']['llm'][0]['message'], '<script>untrusted prompt</script>')

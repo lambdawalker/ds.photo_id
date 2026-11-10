@@ -7,6 +7,7 @@ Generate synthetic ID-style portraits using Qwen Image 2.1 in ComfyUI. Each data
 | `image` | Image | The original generated portrait. |
 | `image_transparent` | Image | The same portrait with an RGBA transparent background. |
 | `prompt` | String | The original generation prompt saved with that portrait. |
+| `parameters` | String (JSON) | Structured subject traits and generation settings; null for older exports without a sidecar. |
 
 ## Generate portraits
 
@@ -28,6 +29,8 @@ dataset/idPhoto/
 │   └── photoId_00001.png
 ├── prompts/
 │   └── photoId_00001.txt
+├── parameters/
+│   └── photoId_00001.json
 └── session.sqlite3
 ```
 
@@ -36,6 +39,21 @@ dataset/idPhoto/
 The positive prompt begins with fixed camera composition: a tight, straight-on headshot, crown-to-chin height around two thirds of the image, a small margin over the head, and upper shoulders reaching beyond the side edges. Clothing descriptions apply only to the neckline and upper shoulders. The LLM edits subject traits separately, then the fixed composition is prepended. Negative conditioning excludes waist-up, mid-body and distant shots.
 
 Restarting upgrades completed prompts that have not been submitted and have no original image yet. Submitted jobs and existing image/prompt records retain their original prompt. The full diagnostic UI workflow uses the same framing. These are model instructions rather than measured crop enforcement; review a small fresh batch on your server before generating the full dataset.
+
+## Structured generation parameters
+
+Every generated portrait has a matching `parameters/photoId_00001.json` record (`schema_version: 1`). This is intended as input to later fictional name, address and ID-detail generators. It contains:
+
+- `sample`: the complete sampled age, gender label, ancestry category, skin, face, eyes, hair, clothing/palette/pieces and accessories. These are intended synthetic generation inputs, not verified attributes measured from the image. Some sampled context (such as ancestry) is not rendered explicitly in the portrait prompt.
+- `prompt_seed`, `image_seed`, and batch size/seed; draft, required phrases and exact final positive prompt.
+- `prompt_finalization`: LLM model/API, thinking and temperature settings, and whether the final text was rewritten or the template was retained.
+- `image_workflow`: the actual submitted Qwen graph, including model filenames, sampler, scheduler, dimensions, seed, steps, CFG and negative prompt; `image_requested_at` is its UTC submission-attempt time.
+- `background_removal`: the saved removal graph and logical original-image path. Its upload filename is assigned separately on the server.
+- `files`: relative paths linking both images and the shared text prompt.
+
+Traits and prompt seeds are captured once at sampling and retained in SQLite. JSON is written atomically when prompts become ready and before each new image/removal submission. Restarting also exports records for existing originals. Older sessions did not save structured traits or actual execution settings: their records explicitly use `provenance: legacy_partial`, null sampled data and a missing-history explanation. They are never resampled or guessed from the image; new execution settings are added only when a new request is made. Updating this code cannot recover historical data that was not recorded.
+
+The web explorer links to each JSON record. The publisher includes it as a JSON string in `parameters` so downstream consumers can call `json.loads(record['parameters'])`. Existing datasets without parameter files still export with null values; malformed JSON files are logged and skipped. No names, addresses, birth dates or document numbers are generated at this stage.
 
 ## Background removal setup
 
@@ -71,7 +89,7 @@ The launchers open a Textual dashboard with separate prompt and image panels. Ea
 
 `generation.prompt_queue_size` limits the number of ready prompts waiting on images (default 64). When full, the LLM worker waits for space. A service error in the image worker pauses dispatch, displays the failure, and preserves the job for retry. LLM rewrite errors still fall back to the original validated template and appear in the prompt log.
 
-State lives in `session.sqlite3` beside `original/`, `transparent/`, and `prompts/`. Keep this file with the dataset to resume reliably. The publisher exports `image`, `image_transparent`, and `prompt`. A session lock prevents two processes writing the same output directory. Existing `img/` and `prompt/` directories are automatically moved to `original/` and `prompts/`; conflicting files stop migration rather than overwrite data. The previous nested `images/original/` and `images/transparent/` folders also migrate to the flat layout. Existing originals are reused and queued for missing transparent versions. A portrait is complete only when both images and its prompt are saved. Batch size and seed must match the saved session.
+State lives in `session.sqlite3` beside `original/`, `transparent/`, and `prompts/`. Keep this file with the dataset to resume reliably. The publisher exports `image`, `image_transparent`, `prompt`, and `parameters`. A session lock prevents two processes writing the same output directory. Existing `img/` and `prompt/` directories are automatically moved to `original/` and `prompts/`; conflicting files stop migration rather than overwrite data. The previous nested `images/original/` and `images/transparent/` folders also migrate to the flat layout. Existing originals are reused and queued for missing transparent versions. A portrait is complete only when both images and its prompt are saved. Batch size and seed must match the saved session.
 
 ComfyUI submission IDs are saved immediately after acknowledgement, so restart and timeout retries retrieve that job instead of intentionally submitting it again. Keep the ComfyUI server/history available until downloads finish. An abrupt process kill in the small interval between server acceptance and acknowledgement can leave an orphan render on the server; local output still has one original, one transparent image and one prompt per sample. Save & exit avoids this interruption window. If the server has lost a saved job/history, let the retrieval time out, then use Shift+R to resubmit failed jobs. Active requests may take up to the configured service timeout (plus an in-progress HTTP request) to drain.
 
@@ -94,7 +112,7 @@ To run only the browser interface:
 
 Keep that command running and open the displayed URL. Use Ctrl+C in its console to drain active work and close the server; closing a browser tab leaves processing running. Terminal and browser modes acquire the same session lock, so launch one generator process and connect as many browser tabs as needed.
 
-The dashboard has separate prompt and image progress panels with ETAs, current jobs, scrolling logs and shared Pause/Resume and Retry controls. Logs update every second and preserve your scroll position when you scroll back. The dataset explorer shows the **latest four saved originals**, newest first, with matching transparent images on a checkerboard, prompts, and errors. Transparent versions appear as soon as removal finishes. Click either image for a full-size view. Existing generations remain available on restart; activity logs cover the current process only. The web server adds no Python dependencies and serves only the dashboard, its state and PNG image routes.
+The dashboard has separate prompt and image progress panels with ETAs, current jobs, scrolling logs and shared Pause/Resume and Retry controls. Logs update every second and preserve your scroll position when you scroll back. The dataset explorer shows the **latest four saved originals**, newest first, with matching transparent images on a checkerboard, prompts, and errors. Transparent versions appear as soon as removal finishes. Click either image for a full-size view. Existing generations remain available on restart; activity logs cover the current process only. The web server adds no Python dependencies and serves only the dashboard, its state, PNG images and parameter JSON records.
 
 ## Time estimates
 

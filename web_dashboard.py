@@ -42,7 +42,7 @@ class Dashboard:
             if job is None:
                 continue
             transparent = s.output / 'transparent' / f'{stem}.png'
-            latest.append({'stem': stem, 'prompt': job['prompt'], 'state': job['state'], 'error': job['error'],
+            latest.append({'parameters': f'/parameters/{stem}.json' if (s.output / 'parameters' / f'{stem}.json').is_file() else None, 'stem': stem, 'prompt': job['prompt'], 'state': job['state'], 'error': job['error'],
                            'original': f'/image/original/{stem}.png',
                            'transparent': f'/image/transparent/{stem}.png' if transparent.is_file() else None})
         prompt_eta, image_eta, averages = p.estimates()
@@ -112,6 +112,12 @@ class Dashboard:
                     target = (directory / filename).resolve()
                     if target.parent == directory and target.is_file():
                         return self.respond(200, target.read_bytes(), 'image/png')
+                metadata = re.fullmatch(r'/parameters/(photoId_\d{5,}\.json)', path)
+                if metadata:
+                    directory = (dashboard.session.output / 'parameters').resolve()
+                    target = (directory / metadata[1]).resolve()
+                    if target.parent == directory and target.is_file():
+                        return self.respond(200, target.read_bytes(), 'application/json')
                 self.respond(404, {'error': 'Not found'})
 
             def do_POST(self):

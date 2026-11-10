@@ -129,7 +129,7 @@ def finalize_prompt(draft, required_phrases, llm):
         return draft
 
 
-def prepare_prompt(age, prompt_seed, template):
+def prepare_prompt(age, prompt_seed, template, include_data=False):
     random.seed(prompt_seed)
     data = generate_sample_data(age)
     draft = " ".join(template.render(**data).split())
@@ -150,7 +150,7 @@ def prepare_prompt(age, prompt_seed, template):
         data["metadata"]["glasses"], data["metadata"]["glare"],
         data["metadata"]["hat"] or data["metadata"]["extra_headwear"],
     ) if phrase)
-    return draft, required
+    return (draft, required, data) if include_data else (draft, required)
 
 
 def render_prompt(age, prompt_seed, template, llm):
@@ -158,13 +158,18 @@ def render_prompt(age, prompt_seed, template, llm):
     return compose_prompt(finalize_prompt(draft, required, llm))
 
 
-def submit_image(workflow, prompt, seed, stem, comfyui):
+def build_image_graph(workflow, prompt, seed, stem):
     graph = copy.deepcopy(workflow)
     graph["452"]["inputs"]["prompt"] = prompt
     graph["452"]["inputs"]["negative_prompt"] = NEGATIVE_PROMPT
     graph["458"]["inputs"]["seed"] = seed
     graph["461"]["inputs"]["filename_prefix"] = f"photo_id/{stem}"
 
+    return graph
+
+
+def submit_image(workflow, prompt, seed, stem, comfyui):
+    graph = build_image_graph(workflow, prompt, seed, stem)
     url = comfyui["url"].rstrip("/")
     queued = request_json(f"{url}/prompt", 30, {"prompt": graph})
     prompt_id = queued.get("prompt_id")

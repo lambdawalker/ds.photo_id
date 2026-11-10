@@ -1,5 +1,6 @@
 import argparse
 import logging
+import json
 import os
 
 from datasets import Dataset, Features, Image, Value, DatasetDict
@@ -11,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 def compile_photo_id_dataset(data_path: str) -> Dataset:
     """Pair each image with its original generation prompt."""
-    features = Features({"image": Image(), "image_transparent": Image(), "prompt": Value("string")})
+    features = Features({"image": Image(), "image_transparent": Image(), "prompt": Value("string"), "parameters": Value("string")})
     img_dir = os.path.join(data_path, "original")
     prompt_dir = os.path.join(data_path, "prompts")
 
@@ -43,7 +44,17 @@ def compile_photo_id_dataset(data_path: str) -> Dataset:
             if not os.path.isfile(transparent_path):
                 logger.warning("Skipping %s: transparent version is missing", filename)
                 continue
-            yield {"image": img_path, "image_transparent": transparent_path, "prompt": prompt}
+            parameters = None
+            parameters_path = os.path.join(data_path, 'parameters', f'{stem}.json')
+            if os.path.isfile(parameters_path):
+                try:
+                    with open(parameters_path, encoding='utf-8') as file:
+                        parameters = json.dumps(json.load(file), ensure_ascii=False)
+                except (OSError, ValueError) as error:
+                    logger.warning('Skipping %s: invalid parameters JSON (%s)', filename, error)
+                    continue
+            yield {"image": img_path, "image_transparent": transparent_path,
+                   "prompt": prompt, "parameters": parameters}
 
     return Dataset.from_generator(data_generator, features=features)
 
