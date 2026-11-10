@@ -5,6 +5,8 @@ import logging
 import random
 import re
 import time
+import uuid
+import struct
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -146,7 +148,7 @@ class ComfyGenerationError(RuntimeError):
     """A server-reported terminal failure; retry needs a new submission."""
 
 
-def wait_image(prompt_id, stem, comfyui):
+def wait_image(prompt_id, stem, comfyui, output_node="461"):
     url = comfyui["url"].rstrip("/")
     deadline = time.monotonic() + comfyui["timeout_seconds"]
     while time.monotonic() < deadline:
@@ -155,7 +157,7 @@ def wait_image(prompt_id, stem, comfyui):
             status = history.get("status", {})
             if status.get("status_str") == "error":
                 raise ComfyGenerationError(f"ComfyUI generation failed for {stem}: {status.get('messages')}")
-            images = history.get("outputs", {}).get("461", {}).get("images", [])
+            images = history.get("outputs", {}).get(output_node, {}).get("images", [])
             if len(images) != 1:
                 raise RuntimeError(f"Expected one ComfyUI output for {stem}, got {len(images)}")
             image = images[0]
@@ -167,6 +169,40 @@ def wait_image(prompt_id, stem, comfyui):
         time.sleep(1)
 
     raise TimeoutError(f"ComfyUI did not finish {stem} within the configured timeout")
+
+
+def png_info(data, require_alpha=False):
+    if len(data) < 33 or not data.startswith(b"\x89PNG\r\n\x1a\n") or data[12:16] != b'IHDR':
+        raise ValueError('Expected a PNG with a valid IHDR header')
+    size = struct.unpack('>II', data[16:24])
+    if not all(size) or (require_alpha and data[25] != 6):
+        raise ValueError('Transparent output must be an RGBA PNG')
+    return size
+
+
+def submit_background(workflow, image_path, comfyui):
+    """Upload the saved original, then run the native BiRefNet graph."""
+    boundary = uuid.uuid4().hex
+    filename = f'photo_id_{uuid.uuid4().hex}.png'
+    body = (
+        f'--{boundary}\r\nContent-Disposition: form-data; name="image"; filename="{filename}"\r\n'
+        'Content-Type: image/png\r\n\r\n'
+    ).encode() + image_path.read_bytes() + f'\r\n--{boundary}--\r\n'.encode()
+    url = comfyui['url'].rstrip('/')
+    request = Request(f'{url}/upload/image', data=body,
+                      headers={'Content-Type': f'multipart/form-data; boundary={boundary}'})
+    with urlopen(request, timeout=30) as response:
+        uploaded = json.load(response)
+    name = uploaded['name']
+    if uploaded.get('subfolder'):
+        name = f"{uploaded['subfolder']}/{name}"
+    graph = copy.deepcopy(workflow)
+    graph['1']['inputs']['image'] = name
+    graph['6']['inputs']['filename_prefix'] = f'photo_id/transparent/{image_path.stem}'
+    queued = request_json(f'{url}/prompt', 30, {'prompt': graph})
+    if not queued.get('prompt_id'):
+        raise RuntimeError(f'ComfyUI rejected background removal: {queued}')
+    return queued['prompt_id']
 
 
 def generate_image(workflow, prompt, seed, stem, comfyui):

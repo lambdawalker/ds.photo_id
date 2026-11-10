@@ -101,7 +101,7 @@ class GenerationApp(App):
         self.query_one('#pause', Button).disabled = False
         self.query_one('#retry', Button).disabled = False
         self.record('llm', 'Session loaded. Saved prompts and seeds are reused.')
-        self.record('image', 'Completed pairs are skipped; submitted ComfyUI jobs are recovered.')
+        self.record('image', 'Originals are retained; missing transparent images are generated.')
         for job in self.session.db.execute("SELECT stem,prompt,error FROM jobs WHERE state='failed' LIMIT 20"):
             self.record('llm' if job['prompt'] is None else 'image', f'{job["stem"]}: {job["error"]}')
         self.set_interval(0.2, self.refresh_progress)
@@ -127,12 +127,12 @@ class GenerationApp(App):
         elif self.pipeline.paused:
             status = 'Pausing — finishing active requests…' if active else 'Paused — safe to exit and resume later'
         elif done == total:
-            status = 'Complete — all image / prompt pairs saved'
+            status = 'Complete — originals, transparent images and prompts saved'
         else:
             status = 'Running — prompt and image workers operate concurrently'
         self.query_one('#summary', Static).update(status)
         self.query_one('#llm-metrics', Static).update(f'{prompts:,} / {total:,} prompts prepared\nReady queue: {ready:,} / {self.session.capacity:,} · Failures: {llm_failed:,}')
-        self.query_one('#image-metrics', Static).update(f'{done:,} / {total:,} images saved\nFailures: {failed - llm_failed:,} · In flight: {int(bool(self.pipeline.active["image"]))}')
+        self.query_one('#image-metrics', Static).update(f'{done:,} / {total:,} portraits complete (both images)\nFailures: {failed - llm_failed:,} · In flight: {int(bool(self.pipeline.active["image"]))}')
         self.query_one('#llm-progress', ProgressBar).update(progress=prompts)
         self.query_one('#image-progress', ProgressBar).update(progress=done)
         for stage in ('llm', 'image'):

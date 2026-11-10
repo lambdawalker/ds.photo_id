@@ -11,11 +11,12 @@ logger = logging.getLogger(__name__)
 
 def compile_photo_id_dataset(data_path: str) -> Dataset:
     """Pair each image with its original generation prompt."""
-    features = Features({"image": Image(), "prompt": Value("string")})
-    img_dir = os.path.join(data_path, "img")
-    prompt_dir = os.path.join(data_path, "prompt")
+    features = Features({"image": Image(), "image_transparent": Image(), "prompt": Value("string")})
+    img_dir = os.path.join(data_path, "images", "original")
+    prompt_dir = os.path.join(data_path, "prompts")
 
-    for directory in (img_dir, prompt_dir):
+    transparent_dir = os.path.join(data_path, "images", "transparent")
+    for directory in (img_dir, transparent_dir, prompt_dir):
         if not os.path.isdir(directory):
             raise FileNotFoundError(f"Required directory not found: {directory}")
 
@@ -38,7 +39,11 @@ def compile_photo_id_dataset(data_path: str) -> Dataset:
                 logger.warning("Skipping %s: generation prompt is empty", filename)
                 continue
 
-            yield {"image": img_path, "prompt": prompt}
+            transparent_path = os.path.join(transparent_dir, f"{stem}.png")
+            if not os.path.isfile(transparent_path):
+                logger.warning("Skipping %s: transparent version is missing", filename)
+                continue
+            yield {"image": img_path, "image_transparent": transparent_path, "prompt": prompt}
 
     return Dataset.from_generator(data_generator, features=features)
 
@@ -71,7 +76,7 @@ def main():
     parser = argparse.ArgumentParser(description="Compile and upload a Photo ID dataset to Hugging Face.")
 
     # Dataset arguments
-    parser.add_argument("--path", type=str, default="./dataset/idPhoto", help="Path to the root data directory containing img and prompt folders.")
+    parser.add_argument("--path", type=str, default="./dataset/idPhoto", help="Path to the root data directory containing images/original, images/transparent and prompts folders.")
     parser.add_argument("--user", type=str, default="lambdaWalker", help="Hugging Face username or organization.")
     parser.add_argument("--dataset_name", type=str, default="ds.photo_id", help="Name of the dataset repository.")
 

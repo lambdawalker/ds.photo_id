@@ -1,10 +1,11 @@
 # Photo ID Dataset Generator
 
-Generate synthetic ID-style portraits using Qwen Image 2.1 in ComfyUI. Each dataset row contains two columns.
+Generate synthetic ID-style portraits using Qwen Image 2.1 in ComfyUI. Each dataset row contains both image variants and their shared prompt.
 
 | Column | Type | Contents |
 | --- | --- | --- |
-| `image` | Image | The generated portrait. |
+| `image` | Image | The original generated portrait. |
+| `image_transparent` | Image | The same portrait with an RGBA transparent background. |
 | `prompt` | String | The original generation prompt saved with that portrait. |
 
 ## Generate portraits
@@ -17,15 +18,29 @@ Edit `config.yaml` to set the ComfyUI URL, the local LLM's OpenAI-compatible API
 
 The external LLM edits the sampled description at low temperature. The generator checks that the sampled phrases and exact age survive, falls back to the template on a failed check or request, and appends the fixed framing. The API graph bypasses the supplied editor workflow's optional in-graph prompt refiner and uses the built-in PNG saver. Seeds are repeatable for the same batch settings. Each output directory is a resumable session. Its sampled descriptions, required traits, image seeds, completed prompts, and workflow are saved once. Use a fresh output directory to change batch size, seed, workflow, or sampled prompt settings. Endpoint settings can be changed between runs; an already-submitted image is polled on its original server.
 
-The generator writes the downloaded image and the exact positive prompt sent to ComfyUI. Files are paired by stem.
+The generator saves the original before running BiRefNet on the ComfyUI server. It then saves a transparent RGBA PNG with matching dimensions. Both images share the exact positive prompt sent to Qwen and are matched by filename stem.
 
 ```text
 dataset/idPhoto/
-├── img/
-│   └── photoId_00001.png
-└── prompt/
-    └── photoId_00001.txt
+├── images/
+│   ├── original/
+│   │   └── photoId_00001.png
+│   └── transparent/
+│       └── photoId_00001.png
+├── prompts/
+│   └── photoId_00001.txt
+└── session.sqlite3
 ```
+
+## Background removal setup
+
+On the **ComfyUI machine** (your DGX Spark), update ComfyUI to a build that includes `LoadBackgroundRemovalModel` and `RemoveBackground`. Download [birefnet.safetensors](https://huggingface.co/Comfy-Org/BiRefNet/resolve/main/background_removal/birefnet.safetensors) into `ComfyUI/models/background_removal/` and restart ComfyUI. No segmentation model is loaded by the Textual client.
+
+The separate `res/birefnet_api.json` graph follows the [official native BiRefNet workflow](https://docs.comfy.org/tutorials/utility/remove-background-birefnet): load the saved original, predict the mask, invert it for `JoinImageWithAlpha`, and save RGBA PNG. It retains soft mask edges and the original dimensions. The graph is snapshotted into each session on first use. Select a different model filename in that graph before creating a new session if needed.
+
+Original generation and background removal run sequentially in the image worker while the LLM worker continues preparing prompts. The original is committed locally before the removal workflow is submitted. Background job IDs are saved separately; failures and restarts reuse the original and resume removal. Both stages run on the configured ComfyUI endpoint. Uploading the original for removal also leaves an input copy on that server, so include those files in your normal ComfyUI storage cleanup after the session completes.
+
+Validate a small batch before launching all 10,000: inspect transparency on light and dark backgrounds, especially around hair, glasses, and clothing. The automated checks verify PNG headers, RGBA output and matching dimensions; they do not judge mask quality.
 
 ## Generation dashboard
 
@@ -40,9 +55,9 @@ The launchers open a Textual dashboard with separate prompt and image panels. Ea
 
 `generation.prompt_queue_size` limits the number of ready prompts waiting on images (default 64). When full, the LLM worker waits for space. A service error in the image worker pauses dispatch, displays the failure, and preserves the job for retry. LLM rewrite errors still fall back to the original validated template and appear in the prompt log.
 
-State lives in `session.sqlite3` beside `img/` and `prompt/`. Keep this file with the dataset to resume reliably. The publisher still exports only image and prompt. A session lock prevents two processes writing the same output directory. Existing valid image/prompt pairs are imported and skipped. Batch size and seed must match the saved session.
+State lives in `session.sqlite3` beside `images/` and `prompts/`. Keep this file with the dataset to resume reliably. The publisher exports `image`, `image_transparent`, and `prompt`. A session lock prevents two processes writing the same output directory. Existing `img/` and `prompt/` directories are automatically moved to `images/original/` and `prompts/`; conflicting files stop migration rather than overwrite data. Existing originals are reused and queued for missing transparent versions. A portrait is complete only when both images and its prompt are saved. Batch size and seed must match the saved session.
 
-ComfyUI submission IDs are saved immediately after acknowledgement, so restart and timeout retries retrieve that job instead of intentionally submitting it again. Keep the ComfyUI server/history available until downloads finish. An abrupt process kill in the small interval between server acceptance and acknowledgement can leave an orphan render on the server; local output still has one pair per sample. Save & exit avoids this interruption window. If the server has lost a saved job/history, let the retrieval time out, then use Shift+R to resubmit failed jobs. Active requests may take up to the configured service timeout (plus an in-progress HTTP request) to drain.
+ComfyUI submission IDs are saved immediately after acknowledgement, so restart and timeout retries retrieve that job instead of intentionally submitting it again. Keep the ComfyUI server/history available until downloads finish. An abrupt process kill in the small interval between server acceptance and acknowledgement can leave an orphan render on the server; local output still has one original, one transparent image and one prompt per sample. Save & exit avoids this interruption window. If the server has lost a saved job/history, let the retrieval time out, then use Shift+R to resubmit failed jobs. Active requests may take up to the configured service timeout (plus an in-progress HTTP request) to drain.
 
 Run the offline regression suite with:
 
@@ -70,7 +85,7 @@ The sampler allocates the batch across individual ages by largest remainder and 
 
 ## Publish to Hugging Face
 
-The publisher uses the optional `publish` dependencies. It skips images whose matching prompt is missing, unreadable or blank. The `body` split contains the image and prompt pairs.
+The publisher uses the optional `publish` dependencies. It skips records whose transparent version or nonempty prompt is missing. The `body` split contains both images and their shared prompt.
 
 ```bash
 uv run --locked --extra publish python publish_data_set.py --path ./dataset/idPhoto --user your_username --dataset_name your_dataset_name

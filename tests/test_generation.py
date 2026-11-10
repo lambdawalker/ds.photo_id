@@ -13,7 +13,16 @@ from generation_session import Pipeline, Session
 from generation_ui import GenerationApp
 from photo_id_generator import ComfyGenerationError
 
-PNG = b'\x89PNG\r\n\x1a\nexample-test-payload'
+import struct
+import zlib
+
+def png_fixture():
+    def chunk(kind, data):
+        return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))
+    return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', 1, 1, 8, 6, 0, 0, 0))
+            + chunk(b'IDAT', zlib.compress(b'\x00\xff\x00\x00\x80')) + chunk(b'IEND', b''))
+
+PNG = png_fixture()
 CONFIG = {
     'generation': {'samples': 5, 'seed': 42, 'output_dir': 'output', 'prompt_queue_size': 2},
     'llm': {'enabled': False, 'url': 'http://llm.test/v1'},
@@ -30,6 +39,9 @@ async def until(predicate):
 
 class PipelineTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        self.background_patch = patch('generation_session.submit_background', return_value='bg-job')
+        self.background_patch.start()
+        self.addCleanup(self.background_patch.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
         self.config = copy.deepcopy(CONFIG)
@@ -82,8 +94,8 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
             self.pipeline.start()
             await until(lambda: self.session.counts().get('done') == 5)
             self.assertEqual(submit.call_count, 4)
-            self.assertEqual(len(list((self.session.output / 'img').glob('*.png'))), 5)
-            self.assertEqual(len(list((self.session.output / 'prompt').glob('*.txt'))), 5)
+            self.assertEqual(len(list((self.session.output / 'images/original').glob('*.png'))), 5)
+            self.assertEqual(len(list((self.session.output / 'prompts').glob('*.txt'))), 5)
 
     async def test_save_exit_drains_inflight_without_dispatching_more(self):
         entered = threading.Event()
@@ -137,7 +149,7 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         with patch('generation_session.submit_image') as submit, patch('generation_session.wait_image', return_value=PNG) as wait:
             await self.pipeline._image(first)
             submit.assert_not_called()
-            self.assertEqual(wait.call_args.args[0], 'durable-id')
+            self.assertEqual(wait.call_args_list[0].args[0], 'durable-id')
 
     async def test_resubmit_lost_job_preserves_prompt_and_seed(self):
         self.session.update(1, prompt='Exact prompt', state='failed', remote_id='lost', remote_url='http://old')
@@ -147,6 +159,44 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(job['remote_id'])
         self.assertEqual(job['prompt'], before['prompt'])
         self.assertEqual(job['image_seed'], before['image_seed'])
+
+    async def test_background_failure_preserves_original_and_retries_only_removal(self):
+        def wait(remote_id, *args):
+            if remote_id == 'bg-job':
+                raise TimeoutError('background busy')
+            return PNG
+        with patch('generation_session.submit_image', return_value='original-job'), patch('generation_session.wait_image', side_effect=wait):
+            self.pipeline.start()
+            await until(lambda: self.session.counts().get('failed') == 1)
+            await self.pipeline.stop()
+        job = self.session.next('failed')
+        self.assertTrue(self.session.paths(job)[0].is_file())
+        self.assertFalse(self.session.transparent_path(job).exists())
+        self.session.close()
+        self.session = Session(self.config, self.root)
+        self.pipeline = Pipeline(self.session)
+        self.pipeline.retry()
+        job = self.session.next('ready')
+        with patch('generation_session.submit_image') as submit, patch('generation_session.submit_background') as bg, patch('generation_session.wait_image', return_value=PNG):
+            await self.pipeline._image(job)
+            submit.assert_not_called()
+            bg.assert_not_called()
+        self.assertEqual(self.session.transparent_path(job).read_bytes(), PNG)
+
+    async def test_legacy_folders_migrate_and_queue_missing_transparency(self):
+        self.session.close()
+        output = self.root / 'output'
+        (output / 'images/original').rename(output / 'img')
+        (output / 'prompts').rename(output / 'prompt')
+        (output / 'img/photoId_00001.png').write_bytes(PNG)
+        (output / 'prompt/photoId_00001.txt').write_text('Legacy prompt')
+        self.session = Session(self.config, self.root)
+        self.pipeline = Pipeline(self.session)
+        self.assertFalse((output / 'img').exists())
+        self.assertFalse((output / 'prompt').exists())
+        job = self.session.next('ready')
+        self.assertEqual(job['prompt'], 'Legacy prompt')
+        self.assertEqual(self.session.paths(job)[0].read_bytes(), PNG)
 
     async def test_terminal_failure_clears_remote_id(self):
         with patch('generation_session.submit_image', return_value='bad-id'), patch('generation_session.wait_image', side_effect=ComfyGenerationError('bad workflow')):
@@ -176,7 +226,7 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.session.next('pending')['id'], 2)
         with patch('generation_session.wait_image', return_value=PNG) as wait:
             await self.pipeline._image(job)
-        self.assertEqual(wait.call_args.args[2]['url'], 'http://original')
+        self.assertEqual(wait.call_args_list[0].args[2]['url'], 'http://original')
 
     async def test_completed_files_reconcile_after_interrupted_commit(self):
         job = self.session.next('pending')
@@ -186,12 +236,12 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.session.close()
         self.session = Session(self.config, self.root)
         self.pipeline = Pipeline(self.session)
-        self.assertEqual(self.session.counts()['done'], 1)
+        self.assertEqual(self.session.counts()['ready'], 1)
 
 
 class UITests(unittest.IsolatedAsyncioTestCase):
     async def test_panels_pause_resume_and_exit(self):
-        with tempfile.TemporaryDirectory() as root, patch('generation_session.submit_image', return_value='ui-job'), patch('generation_session.wait_image', return_value=PNG):
+        with tempfile.TemporaryDirectory() as root, patch('generation_session.submit_background', return_value='bg-ui'), patch('generation_session.submit_image', return_value='ui-job'), patch('generation_session.wait_image', return_value=PNG):
             app = GenerationApp(copy.deepcopy(CONFIG), Path(root))
             async with app.run_test(size=(120, 38)) as pilot:
                 await until(lambda: app.pipeline is not None)

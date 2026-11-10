@@ -2,9 +2,11 @@
 import json
 import threading
 import unittest
+import tempfile
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from photo_id_generator import ROOT, finalize_prompt, generate_image
+from photo_id_generator import ROOT, finalize_prompt, generate_image, submit_background, wait_image
 
 
 class HTTPTests(unittest.TestCase):
@@ -22,7 +24,12 @@ class HTTPTests(unittest.TestCase):
                 self.wfile.write(value if isinstance(value, bytes) else json.dumps(value).encode())
 
             def do_POST(self):
-                data = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+                raw = self.rfile.read(int(self.headers['Content-Length']))
+                if self.path == '/upload/image':
+                    received['upload'] = raw
+                    self.reply({'name': 'uploaded.png', 'subfolder': 'batch', 'type': 'input'})
+                    return
+                data = json.loads(raw)
                 received[self.path] = data
                 if self.path == '/api/v1/chat':
                     self.reply({'output': [{'type': 'message', 'content': json.loads(data['input'])['draft']}]})
@@ -34,7 +41,8 @@ class HTTPTests(unittest.TestCase):
                     self.reply(png)
                 else:
                     self.reply({'remote-id': {'status': {'status_str': 'success'}, 'outputs': {
-                        '461': {'images': [{'filename': 'one.png', 'subfolder': 'photo_id', 'type': 'output'}]}
+                        '461': {'images': [{'filename': 'one.png', 'subfolder': 'photo_id', 'type': 'output'}]},
+                        '6': {'images': [{'filename': 'transparent.png', 'subfolder': 'photo_id', 'type': 'output'}]}
                     }}})
 
         with ThreadingHTTPServer(('127.0.0.1', 0), Handler) as server:
@@ -53,6 +61,19 @@ class HTTPTests(unittest.TestCase):
                 self.assertEqual(graph['458']['inputs']['seed'], 123)
                 self.assertEqual(graph['461']['inputs']['filename_prefix'], 'photo_id/photoId_00001')
                 self.assertNotEqual(workflow['452']['inputs']['prompt'], prompt)
+                background = json.loads((ROOT / 'res/birefnet_api.json').read_text())
+                with tempfile.TemporaryDirectory() as directory:
+                    original = Path(directory) / 'photoId_00001.png'
+                    original.write_bytes(png)
+                    remote = submit_background(background, original, {'url': base})
+                    self.assertEqual(wait_image(remote, original.stem, {'url': base, 'timeout_seconds': 2}, '6'), png)
+                graph = received['/prompt']['prompt']
+                self.assertIn(png, received['upload'])
+                self.assertEqual(graph['1']['inputs']['image'], 'batch/uploaded.png')
+                self.assertEqual(graph['3']['class_type'], 'RemoveBackground')
+                self.assertEqual(graph['4']['class_type'], 'InvertMask')
+                self.assertEqual(graph['5']['inputs']['alpha'], ['4', 0])
+                self.assertEqual(graph['6']['inputs']['images'], ['5', 0])
             finally:
                 server.shutdown()
                 thread.join()

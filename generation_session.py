@@ -11,7 +11,7 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 from id_data import generate_ages
 from photo_id_generator import (
     ROOT, FRAMING, ComfyGenerationError, finalize_prompt, prepare_prompt,
-    submit_image, wait_image,
+    submit_image, wait_image, submit_background, png_info,
 )
 
 
@@ -43,8 +43,19 @@ class Session:
                 );
                 CREATE INDEX IF NOT EXISTS jobs_state ON jobs(state, id);
             ''')
-            for name in ('img', 'prompt'):
-                (self.output / name).mkdir(exist_ok=True)
+            columns = {row['name'] for row in self.db.execute('PRAGMA table_info(jobs)')}
+            with self.db:
+                for name in ('background_id', 'background_url'):
+                    if name not in columns:
+                        self.db.execute(f'ALTER TABLE jobs ADD COLUMN {name} TEXT')
+            self._migrate_layout()
+            for name in ('images/original', 'images/transparent', 'prompts'):
+                (self.output / name).mkdir(parents=True, exist_ok=True)
+            with self.db:
+                self.db.execute('INSERT OR IGNORE INTO meta VALUES(?,?)',
+                                ('background_workflow', (ROOT / 'res/birefnet_api.json').read_text(encoding='utf-8')))
+            self.background_workflow = json.loads(self.db.execute(
+                "SELECT value FROM meta WHERE key='background_workflow'").fetchone()['value'])
             settings = {'samples': generation['samples'], 'seed': generation['seed']}
             saved = self.db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()
             if saved:
@@ -76,27 +87,54 @@ class Session:
                 ('settings', json.dumps(settings)), ('workflow', workflow),
             ])
 
+    def _migrate_layout(self):
+        # Restartable moves: never overwrite a different existing file.
+        for old, new in (('img', 'images/original'), ('prompt', 'prompts')):
+            source, target = self.output / old, self.output / new
+            if not source.exists():
+                continue
+            target.mkdir(parents=True, exist_ok=True)
+            for item in source.iterdir():
+                destination = target / item.name
+                if destination.exists():
+                    if not item.is_file() or item.read_bytes() != destination.read_bytes():
+                        raise ValueError(f'Folder migration conflict: {destination}')
+                    item.unlink()
+                else:
+                    item.rename(destination)
+            source.rmdir()
+
     def _reconcile_files(self):
         for job in self.db.execute('SELECT * FROM jobs').fetchall():
             image, prompt = self.paths(job)
+            transparent = self.transparent_path(job)
+            if transparent.exists() and not image.exists():
+                raise ValueError(f'Transparent image has no original: {transparent}')
             if image.exists():
                 if not prompt.is_file():
                     raise ValueError(f'Existing image has no prompt: {image}')
                 text = prompt.read_text(encoding='utf-8')
-                with image.open('rb') as stream:
-                    valid = stream.read(8) == b'\x89PNG\r\n\x1a\n'
-                if not text.strip() or not valid or (job['prompt'] and job['prompt'] != text):
+                size = png_info(image.read_bytes())
+                if not text.strip() or (job['prompt'] and job['prompt'] != text):
                     raise ValueError(f'Existing image/prompt pair is inconsistent: {job["stem"]}')
-                if job['state'] != 'done':
-                    self.update(job['id'], state='done', prompt=text, error=None)
+                complete = transparent.is_file()
+                if complete and png_info(transparent.read_bytes(), require_alpha=True) != size:
+                    raise ValueError(f'Image dimensions differ: {job["stem"]}')
+                state = 'done' if complete else ('failed' if job['state'] == 'failed' else 'ready')
+                self.update(job['id'], state=state, prompt=text,
+                            error=None if complete else job['error'])
             elif job['state'] == 'done':
-                self.update(job['id'], state='ready', remote_id=None, remote_url=None)
+                self.update(job['id'], state='ready', remote_id=None, remote_url=None,
+                            background_id=None, background_url=None)
 
     def paths(self, job):
-        return self.output / 'img' / f'{job["stem"]}.png', self.output / 'prompt' / f'{job["stem"]}.txt'
+        return self.output / 'images/original' / f'{job["stem"]}.png', self.output / 'prompts' / f'{job["stem"]}.txt'
+
+    def transparent_path(self, job):
+        return self.output / 'images/transparent' / f'{job["stem"]}.png'
 
     def update(self, job_id, **values):
-        allowed = {'prompt', 'state', 'remote_id', 'remote_url', 'error'}
+        allowed = {'prompt', 'state', 'remote_id', 'remote_url', 'background_id', 'background_url', 'error'}
         if not values or not values.keys() <= allowed:
             raise ValueError('Invalid job update')
         with self.db:
@@ -112,7 +150,7 @@ class Session:
     def retry(self, resubmit=False):
         with self.db:
             if resubmit:
-                self.db.execute("UPDATE jobs SET remote_id=NULL, remote_url=NULL WHERE state='failed'")
+                self.db.execute("UPDATE jobs SET remote_id=NULL, remote_url=NULL, background_id=NULL, background_url=NULL WHERE state='failed'")
             self.db.execute("UPDATE jobs SET state=CASE WHEN prompt IS NULL THEN 'pending' ELSE 'ready' END, error=NULL WHERE state='failed'")
 
     def close(self):
@@ -178,7 +216,7 @@ class Pipeline:
             except Exception as error:
                 values = {'state': 'failed', 'error': str(error)}
                 if isinstance(error, ComfyGenerationError):
-                    values.update(remote_id=None, remote_url=None)
+                    values.update(remote_id=None, remote_url=None, background_id=None, background_url=None)
                 session.update(job['id'], **values)
                 self.notify(stage, f'{job["stem"]}: {error}')
                 # Stop dispatching after a service failure instead of failing the entire batch.
@@ -189,21 +227,38 @@ class Pipeline:
 
     async def _image(self, job):
         session = self.session
-        comfy = dict(session.config['comfyui'])
-        remote_id = job['remote_id']
-        if remote_id:
-            # Poll the server that accepted this job even if the config URL changed.
-            comfy['url'] = job['remote_url']
-        else:
-            remote_id = await asyncio.to_thread(submit_image, session.workflow, job['prompt'], job['image_seed'], job['stem'], comfy)
-            session.update(job['id'], remote_id=remote_id, remote_url=comfy['url'])
-        png = await asyncio.to_thread(wait_image, remote_id, job['stem'], comfy)
         image_path, prompt_path = session.paths(job)
-        # Commit prompt before image; a crash before DB update is reconciled on open.
-        prompt_temp = prompt_path.with_suffix('.txt.tmp')
-        image_temp = image_path.with_suffix('.png.tmp')
-        prompt_temp.write_text(job['prompt'], encoding='utf-8')
-        image_temp.write_bytes(png)
-        prompt_temp.replace(prompt_path)
-        image_temp.replace(image_path)
+        transparent_path = session.transparent_path(job)
+        if not image_path.exists():
+            comfy = dict(session.config['comfyui'])
+            remote_id = job['remote_id']
+            if remote_id:
+                comfy['url'] = job['remote_url']
+            else:
+                remote_id = await asyncio.to_thread(submit_image, session.workflow, job['prompt'], job['image_seed'], job['stem'], comfy)
+                session.update(job['id'], remote_id=remote_id, remote_url=comfy['url'])
+            png = await asyncio.to_thread(wait_image, remote_id, job['stem'], comfy)
+            png_info(png)
+            self._save(prompt_path, job['prompt'].encode('utf-8'))
+            self._save(image_path, png)
+            self.notify('image', f'{job["stem"]}: original saved')
+        if not transparent_path.exists():
+            self.notify('image', f'{job["stem"]}: removing background')
+            comfy = dict(session.config['comfyui'])
+            remote_id = job['background_id']
+            if remote_id:
+                comfy['url'] = job['background_url']
+            else:
+                remote_id = await asyncio.to_thread(submit_background, session.background_workflow, image_path, comfy)
+                session.update(job['id'], background_id=remote_id, background_url=comfy['url'])
+            png = await asyncio.to_thread(wait_image, remote_id, job['stem'], comfy, '6')
+            if png_info(png, require_alpha=True) != png_info(image_path.read_bytes()):
+                raise ValueError('Transparent output dimensions do not match the original')
+            self._save(transparent_path, png)
         session.update(job['id'], state='done', error=None)
+
+    @staticmethod
+    def _save(path, data):
+        temporary = path.with_suffix(path.suffix + '.tmp')
+        temporary.write_bytes(data)
+        temporary.replace(path)
