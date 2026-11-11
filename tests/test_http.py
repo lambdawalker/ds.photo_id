@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from photo_id_generator import ROOT, finalize_prompt, generate_image, submit_background, wait_image
+from photo_id_generator import ROOT, finalize_prompt, submit_image, submit_background, wait_image
 
 
 class HTTPTests(unittest.TestCase):
@@ -54,7 +54,9 @@ class HTTPTests(unittest.TestCase):
                 prompt = finalize_prompt('A person, 20 years old.', ['20 years old'], llm)
                 self.assertEqual(received['/api/v1/chat']['reasoning'], 'off')
                 workflow = json.loads((ROOT / 'res/qwen_image_2_1_api.json').read_text())
-                result = generate_image(workflow, prompt, 123, 'photoId_00001', {'url': base, 'timeout_seconds': 2})
+                comfy = {'url': base, 'timeout_seconds': 2}
+                remote = submit_image(workflow, prompt, 123, 'photoId_00001', comfy)
+                result = wait_image(remote, 'photoId_00001', comfy)
                 self.assertEqual(result, png)
                 graph = received['/prompt']['prompt']
                 self.assertEqual(graph['452']['inputs']['prompt'], prompt)

@@ -11,7 +11,6 @@ from filelock import FileLock
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from id_data import generate_ages
-import remote_cleanup
 from file_storage import atomic_write
 from image_storage import settings as storage_settings, encode, info as image_info
 from processing_estimates import estimate, active_work, rolling_averages
@@ -49,9 +48,6 @@ class Session:
                     remote_id TEXT, remote_url TEXT, error TEXT
                 );
                 CREATE INDEX IF NOT EXISTS jobs_state ON jobs(state, id);
-                CREATE TABLE IF NOT EXISTS cleanup_queue (
-                    url TEXT NOT NULL, prompt_id TEXT NOT NULL, PRIMARY KEY(url, prompt_id)
-                );
                 CREATE TABLE IF NOT EXISTS timings (
                     id INTEGER PRIMARY KEY, stage TEXT NOT NULL, seconds REAL NOT NULL
                 );
@@ -223,17 +219,6 @@ class Session:
         path = self.output / 'parameters' / f'{job["stem"]}.json'
         atomic_write(path, (json.dumps(record, indent=2, ensure_ascii=False) + '\n').encode('utf-8'))
 
-    def queue_cleanup(self, job_id):
-        job = self.db.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone()
-        image, prompt = self.paths(job)
-        if (not image.is_file() or not self.transparent_path(job).is_file()
-                or not (self.output / 'parameters' / f'{job["stem"]}.json').is_file()):
-            return
-        with self.db:
-            for id_key, url_key in (('remote_id', 'remote_url'), ('background_id', 'background_url')):
-                if job[id_key] and job[url_key]:
-                    self.db.execute('INSERT OR IGNORE INTO cleanup_queue VALUES(?,?)', (job[url_key], job[id_key]))
-
     def record_time(self, stage, seconds):
         with self.db:
             self.db.execute('INSERT INTO timings(stage, seconds) VALUES(?,?)', (stage, seconds))
@@ -260,7 +245,6 @@ class Pipeline:
         self.changed = asyncio.Event()
         self.tasks = []
         self.running = {}
-        self.cleanup_changed = asyncio.Event()
         self.work_remaining = {'llm': None, 'image': None}
         self.uploader = None
         self.upload_error = None
@@ -298,8 +282,6 @@ class Pipeline:
                 self.upload_error = str(error)
                 self.notify('upload', f'Hugging Face configuration error: {error}')
         self.tasks = [asyncio.create_task(self._worker('llm')), asyncio.create_task(self._worker('image'))]
-        if self.session.config.get('comfyui', {}).get('cleanup', {}).get('enabled', False):
-            self.tasks.append(asyncio.create_task(self._cleanup_worker()))
 
     def pause(self):
         self.paused = True
@@ -315,7 +297,6 @@ class Pipeline:
 
     async def stop(self):
         self.stopping = True
-        self.cleanup_changed.set()
         self.changed.set()
         await asyncio.gather(*self.tasks)
         if self.uploader:
@@ -328,41 +309,6 @@ class Pipeline:
         return {'enabled': enabled, 'status': 'error' if self.upload_error else 'disabled',
                 'error': self.upload_error, 'uploaded': 0, 'pending': 0,
                 'repo_id': self.session.config.get('huggingface', {}).get('repo_id')}
-
-    async def _cleanup_worker(self):
-        config = self.session.config['comfyui']['cleanup']
-        if not remote_cleanup.token(config):
-            self.notify('image', 'Server cleanup pending: set PHOTO_ID_CLEANUP_TOKEN and install the cleanup extension on ComfyUI.')
-            return
-        for row in self.session.db.execute("SELECT id FROM jobs WHERE state='done'").fetchall():
-            self.session.queue_cleanup(row['id'])
-        reported = False
-        while not self.stopping:
-            self.cleanup_changed.clear()
-            for row in self.session.db.execute('SELECT * FROM cleanup_queue ORDER BY rowid LIMIT 16').fetchall():
-                if self.stopping:
-                    break
-                try:
-                    await asyncio.to_thread(remote_cleanup.cleanup, row['url'], row['prompt_id'], config)
-                    with self.session.db:
-                        self.session.db.execute('DELETE FROM cleanup_queue WHERE url=? AND prompt_id=?', (row['url'], row['prompt_id']))
-                        # Do not enqueue the same acknowledged IDs after a restart.
-                        self.session.db.execute('UPDATE jobs SET remote_id=NULL,remote_url=NULL WHERE remote_id=? AND remote_url=?', (row['prompt_id'], row['url']))
-                        self.session.db.execute('UPDATE jobs SET background_id=NULL,background_url=NULL WHERE background_id=? AND background_url=?', (row['prompt_id'], row['url']))
-                    self.notify('image', 'Removed downloaded job files from ComfyUI.')
-                except Exception as error:
-                    if not reported:
-                        self.notify('image', f'Server cleanup deferred (will retry): {error}')
-                        reported = True
-                    # Rotate failed records so lost history for one job cannot
-                    # prevent newer downloaded jobs from being cleaned up.
-                    with self.session.db:
-                        self.session.db.execute('DELETE FROM cleanup_queue WHERE url=? AND prompt_id=?', (row['url'], row['prompt_id']))
-                        self.session.db.execute('INSERT INTO cleanup_queue(url,prompt_id) VALUES(?,?)', (row['url'], row['prompt_id']))
-            try:
-                await asyncio.wait_for(self.cleanup_changed.wait(), timeout=30)
-            except asyncio.TimeoutError:
-                pass
 
     async def _worker(self, stage):
         session = self.session
@@ -459,9 +405,6 @@ class Pipeline:
         session.update(job['id'], state='done', error=None)
         if self.uploader:
             self.uploader.changed.set()
-        if session.config.get('comfyui', {}).get('cleanup', {}).get('enabled', False):
-            session.queue_cleanup(job['id'])
-            self.cleanup_changed.set()
 
     @staticmethod
     def _save(path, data):

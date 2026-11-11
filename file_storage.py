@@ -1,4 +1,4 @@
-"""Commit local records before acknowledging remote file cleanup."""
+"""Atomically persist local images, prompts and generation records."""
 import os
 
 

@@ -40,23 +40,11 @@ The positive prompt begins with fixed camera composition: a tight, straight-on h
 
 Restarting upgrades completed prompts that have not been submitted and have no original image yet. Submitted jobs and existing image/prompt records retain their original prompt. The full diagnostic UI workflow uses the same framing. These are model instructions rather than measured crop enforcement; review a small fresh batch on your server before generating the full dataset.
 
-## Image storage and ComfyUI cleanup
+## Image storage
 
-The supplied configuration saves **WebP at quality 90** for both image variants. WebP supports lossy color compression with a lossless transparency channel. Configure `generation.image_storage.format` (`webp` or `png`), `quality` (0–100), and `lossless` (true/false). Encoding uses Pillow locally after PNG downloads; the ComfyUI graph needs no new image-saving nodes. Original WebP images are uploaded as WebP for removal. Changing the setting applies to missing/new images; existing PNGs remain intact and mixed PNG/WebP sessions resume normally. File paths and encoding settings are included in parameter JSON. The publisher and web explorer support both formats. Avoid keeping both PNG and WebP copies with the same stem in the same variant folder.
+The supplied configuration saves **WebP at quality 90** for both image variants, preserving transparency. Configure `generation.image_storage.format` (`webp` or `png`), `quality` (0–100), and `lossless` (true/false). Encoding uses Pillow locally after PNG downloads. Changing the setting applies to missing/new images; existing PNGs remain intact and mixed PNG/WebP sessions resume normally. File paths and encoding settings are included in parameter JSON. Avoid keeping both PNG and WebP copies with the same stem in the same variant folder.
 
-Server cleanup is disabled by default. No token or extension is needed to generate images. Delete the downloaded jobs from the ComfyUI server manually when convenient; keep active jobs until the generator has saved both local image variants and their parameters JSON.
-
-If you later choose to enable automated server-side deletion, install the optional extension shipped here:
-
-1. Copy `comfyui_extensions/ds_photo_id_cleanup/` into `ComfyUI/custom_nodes/ds_photo_id_cleanup/` on the Spark.
-2. Set `PHOTO_ID_CLEANUP_TOKEN` to the same randomly generated secret in both the ComfyUI process environment and the generator process environment. For example, generate a token with `python -c "import secrets; print(secrets.token_urlsafe(32))"`. On Linux use `export PHOTO_ID_CLEANUP_TOKEN=YOUR_TOKEN` before starting ComfyUI; in PowerShell use `$env:PHOTO_ID_CLEANUP_TOKEN='YOUR_TOKEN'` before `run.bat`.
-3. Restart ComfyUI. Set `comfyui.cleanup.enabled: true` in the generator configuration. The client environment variable name can be configured with `comfyui.cleanup.token_env`; the extension always reads `PHOTO_ID_CLEANUP_TOKEN`.
-
-ComfyUI's standard history deletion does not remove image files. This extension adds authenticated `POST /photo-id/cleanup`, using saved job history to identify files. It only accepts this project's numbered outputs beneath `output/photo_id/` and its UUID-named uploaded inputs, with path checks that reject traversal and files outside those roots. It never accepts arbitrary filesystem paths from the client. Job history is retained for idempotent deletion retries until ComfyUI evicts it normally.
-
-Output names on the ComfyUI server include a unique request suffix, preventing cached SaveImage results from referring to previously deleted output files. Local dataset stems stay unchanged.
-
-The generator queues cleanup **only after the original, transparent version, and parameters JSON are committed locally**. Cleanup runs independently, retries every 30 seconds and on restart, and does not pause generation if the endpoint or token is missing. Pending cleanup lives in `session.sqlite3`. Successful acknowledgements remove the queue entry and clear the associated remote IDs. Do not manually erase ComfyUI history before cleanup finishes: missing history cannot identify old files and stays pending. Uploads orphaned before a workflow is accepted/acknowledged cannot be recovered through job history. Diagnostics saved outside `photo_id/` are intentionally excluded.
+Clean server-side ComfyUI images manually after both local variants and their parameters JSON are saved. No cleanup extension or cleanup token is used. Server output names include unique request suffixes to prevent cached SaveImage results from referring to previously deleted files; local dataset stems stay unchanged.
 
 ## Structured generation parameters
 
@@ -71,7 +59,7 @@ Every generated portrait has a matching `parameters/photoId_00001.json` record (
 
 Traits and prompt seeds are captured once at sampling and retained in SQLite. JSON is written atomically when prompts become ready and before each new image/removal submission. Restarting also exports records for existing originals. Older sessions did not save structured traits or actual execution settings: their records explicitly use `provenance: legacy_partial`, null sampled data and a missing-history explanation. They are never resampled or guessed from the image; new execution settings are added only when a new request is made. Updating this code cannot recover historical data that was not recorded.
 
-The web explorer links to each JSON record. The publisher includes it as a JSON string in `parameters` so downstream consumers can call `json.loads(record['parameters'])`. Existing datasets without parameter files still export with null values; malformed JSON files are logged and skipped. No names, addresses, birth dates or document numbers are generated at this stage.
+The web explorer links to each JSON record. The upload worker includes it as a JSON string in `parameters` so downstream consumers can call `json.loads(record['parameters'])`. Records are uploaded only after their image/prompt files and JSON are complete and consistent. No names, addresses, birth dates or document numbers are generated at this stage.
 
 ## Background removal setup
 
@@ -107,7 +95,7 @@ The launchers open a Textual dashboard with separate prompt and image panels. Ea
 
 `generation.prompt_queue_size: null` (the default) lets the LLM prepare the entire batch independently. Each finished prompt is immediately committed to `prompts/`, its structured record is written to `parameters/`, and SQLite records it as ready for the image worker. Both workers still run concurrently and resume from disk. An optional positive queue size can limit how far the LLM runs ahead; only that setting makes it wait for queue space. A service error in the image worker pauses dispatch, displays the failure, and preserves the job for retry. LLM rewrite errors still fall back to the original validated template and appear in the prompt log.
 
-State lives in `session.sqlite3` beside `original/`, `transparent/`, and `prompts/`. Keep this file with the dataset to resume reliably. The publisher exports `image`, `image_transparent`, `prompt`, and `parameters`. A session lock prevents two processes writing the same output directory. Existing `img/` and `prompt/` directories are automatically moved to `original/` and `prompts/`; conflicting files stop migration rather than overwrite data. The previous nested `images/original/` and `images/transparent/` folders also migrate to the flat layout. Existing originals are reused and queued for missing transparent versions. A portrait is complete only when both images and its prompt are saved. Batch size and seed must match the saved session.
+State lives in `session.sqlite3` beside `original/`, `transparent/`, and `prompts/`. Keep this file with the dataset to resume reliably. Incremental uploads include `id`, `image`, `image_transparent`, `prompt`, and `parameters`. A session lock prevents two processes writing the same output directory. Existing `img/` and `prompt/` directories are automatically moved to `original/` and `prompts/`; conflicting files stop migration rather than overwrite data. The previous nested `images/original/` and `images/transparent/` folders also migrate to the flat layout. Existing originals are reused and queued for missing transparent versions. A portrait is complete only when both images and its prompt are saved. Batch size and seed must match the saved session.
 
 ComfyUI submission IDs are saved immediately after acknowledgement, so restart and timeout retries retrieve that job instead of intentionally submitting it again. Keep the ComfyUI server/history available until downloads finish. An abrupt process kill in the small interval between server acceptance and acknowledgement can leave an orphan render on the server; local output still has one original, one transparent image and one prompt per sample. Save & exit avoids this interruption window. If the server has lost a saved job/history, let the retrieval time out, then use Shift+R to resubmit failed jobs. Active requests may take up to the configured service timeout (plus an in-progress HTTP request) to drain.
 
@@ -180,17 +168,7 @@ Only records with both images and saved parameters are eligible. New immutable s
 
 Both dashboards have a dedicated **Hugging Face panel** with its own progress bar, uploaded/pending counts, current batch and record count, processing phase, retry countdown, and scrolling error/activity log. Upload phases distinguish preparing a shard, creating/checking the dataset, checking repository layout, and uploading/committing. The uploader owns a separate asyncio task; Parquet encoding and Hub requests run in worker threads so prompts, images and UI updates continue during slow uploads. Press **U** in the terminal or **Retry upload** in the browser to bypass the retry countdown (resume first if paused). The terminal shows three columns on wide windows and stacks panels in narrower windows. During shutdown it explicitly reports when it is draining uploads. Network/login failures never pause image generation. Pause prevents starting another upload; an active upload finishes. Save & exit drains generation and then tries to upload all remaining records, including a partial final batch. If that attempt fails, data stays queued for the next run. Upload requests can extend shutdown time. The Hub dataset viewer may refresh later than the commit itself.
 
-Use a dedicated empty repository or one created by this uploader. It refuses to mix shards into an older dataset layout. Existing dataset cards are preserved; first-time setup adds a card describing the `train` split. Do not run the older full-export command against the incremental repository, since its export layout is different. The uploader itself never changes or deletes existing remote shards.
-
-## Publish to Hugging Face
-
-The publisher uses the optional `publish` dependencies. It skips records whose transparent version or nonempty prompt is missing. The `body` split contains both images and their shared prompt.
-
-```bash
-uv run --locked --extra publish python publish_data_set.py --path ./dataset/idPhoto --user your_username --dataset_name your_dataset_name
-```
-
-The [hosted dataset](https://huggingface.co/datasets/lambdaWalker/ds.photo_id) has its own dataset card and license information.
+Use a dedicated empty repository or one created by this uploader. It refuses to mix shards into an older dataset layout. Existing dataset cards are preserved; first-time setup adds a card describing the `train` split. The uploader itself never changes or deletes existing remote shards.
 
 ## Portrait trait sampling
 
@@ -212,3 +190,13 @@ uv run --locked python preview_clothing.py --count 10 --palette "muted contrast"
 ```
 
 The preview prints JSON with garment roles, colors, palette names and the final clothing description. Available palette groups are neutral, tonal, muted contrast and bright accent.
+
+## Project entry points
+
+- `run.bat` / `run.sh`: supported launchers; `--web` selects browser-only mode. Both call `photo_id_generator.py`.
+- `preview_clothing.py`: inspect sampled clothing and color combinations without generation.
+- `generation_session.py`, `generation_ui.py`, `web_dashboard.py`, and `incremental_upload.py`: runtime modules used by the launchers.
+- `res/check_*_ui.json`: current drag-and-drop ComfyUI diagnostics; the other Qwen/BiRefNet JSON files are runtime API graphs.
+- `tests/`: offline regression suite.
+
+The obsolete Flux graph, separate full-dataset publishing script, and token-based server cleanup extension have been removed. Existing session databases and generated files do not need migration for this cleanup.

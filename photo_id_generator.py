@@ -153,11 +153,6 @@ def prepare_prompt(age, prompt_seed, template, include_data=False):
     return (draft, required, data) if include_data else (draft, required)
 
 
-def render_prompt(age, prompt_seed, template, llm):
-    draft, required = prepare_prompt(age, prompt_seed, template)
-    return compose_prompt(finalize_prompt(draft, required, llm))
-
-
 def build_image_graph(workflow, prompt, seed, stem):
     graph = copy.deepcopy(workflow)
     graph["452"]["inputs"]["prompt"] = prompt
@@ -240,10 +235,6 @@ def submit_background(workflow, image_path, comfyui):
     if not queued.get('prompt_id'):
         raise RuntimeError(f'ComfyUI rejected background removal: {queued}')
     return queued['prompt_id']
-
-
-def generate_image(workflow, prompt, seed, stem, comfyui):
-    return wait_image(submit_image(workflow, prompt, seed, stem, comfyui), stem, comfyui)
 
 
 def main():

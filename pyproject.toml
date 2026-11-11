@@ -12,12 +12,5 @@ dependencies = [
     "textual>=8.2.8",
 ]
 
-[project.optional-dependencies]
-publish = [
-    "datasets",
-    "huggingface-hub",
-    "pillow",
-]
-
 [tool.uv]
 package = false
