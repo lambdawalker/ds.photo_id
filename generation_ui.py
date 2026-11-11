@@ -40,18 +40,18 @@ class GenerationApp(App):
     ProgressBar { width: 1fr; height: 1; }
     ProgressBar > Bar { width: 1fr; }
     RichLog { height: 1fr; min-height: 3; background: #14212b; border-top: solid #39556a; }
-    #upload-status { height: 1; padding: 0 1; color: #9baebc; }
     #controls { height: 3; align-horizontal: center; padding: 0; }
     Button { margin: 0 1; }
     Footer { background: #1b2b38; }
     .compact #panels { layout: vertical; }
-    .compact .panel { width: 1fr; height: 1fr; min-height: 11; }
+    .compact .panel { width: 1fr; height: 1fr; min-height: 12; }
     .details #location, .details .endpoint { display: block; }
     '''
     BINDINGS = [
         ('space', 'toggle_pause', 'Pause / resume'),
         ('d', 'toggle_details', 'Connection details'),
         ('r', 'retry', 'Retry failures'),
+        ('u', 'retry_upload', 'Retry upload'),
         ('shift+r', 'resubmit', 'Resubmit lost jobs'),
         ('q', 'save_exit', 'Save & exit'),
         ('ctrl+c', 'save_exit', 'Save & exit'),
@@ -78,6 +78,7 @@ class GenerationApp(App):
             for stage, title, endpoint in (
                 ('llm', '01  PROMPT GENERATION', self.config['llm']['url'] if self.config['llm']['enabled'] else 'Template mode · LLM disabled'),
                 ('image', '02  IMAGE GENERATION', self.config['comfyui']['url']),
+                ('upload', '03  HUGGING FACE', self.config.get('huggingface', {}).get('repo_id', 'Uploads disabled')),
             ):
                 with Vertical(classes='panel'):
                     yield Static(title, classes='heading')
@@ -87,7 +88,6 @@ class GenerationApp(App):
                     yield Static('Waiting', id=f'{stage}-current', classes='current', markup=False)
                     yield Static('ETA: measuring…', id=f'{stage}-timing', classes='timing', markup=False)
                     yield RichLog(id=f'{stage}-log', wrap=True, min_width=1, max_lines=2000, markup=False)
-        yield Static('Hugging Face: disabled', id='upload-status', markup=False)
         with Horizontal(id='controls'):
             yield Button('Pause', id='pause', variant='warning', disabled=True)
             yield Button('Retry failures', id='retry', disabled=True)
@@ -126,7 +126,7 @@ class GenerationApp(App):
         self.refresh_progress()
 
     def on_resize(self, event):
-        self.screen.set_class(event.size.width < 100, 'compact')
+        self.screen.set_class(event.size.width < 140, 'compact')
 
     def record(self, stage, message):
         if self.dashboard:
@@ -137,9 +137,16 @@ class GenerationApp(App):
         if not self.pipeline:
             return
         upload = self.pipeline.upload_snapshot()
-        self.query_one('#upload-status', Static).update(
-            f"HF: {upload['uploaded']:,} uploaded · {upload['pending']:,} pending · {upload['status']}"
-            + (f" · {upload['error']}" if upload['error'] else ''))
+        self.query_one('#upload-metrics', Static).update(
+            f"{upload['uploaded']:,} / {self.config['generation']['samples']:,} portraits uploaded\n"
+            f"Pending: {upload['pending']:,} · {upload['status']}")
+        self.query_one('#upload-progress', ProgressBar).update(progress=upload['uploaded'])
+        self.query_one('#upload-current', Static).update(upload.get('phase') or upload['status'])
+        batch = upload.get('current_batch')
+        retry = upload.get('retry_in_seconds', 0)
+        self.query_one('#upload-timing', Static).update(
+            (f"Batch: {batch[:12]} · {upload.get('batch_records', 0)} records" if batch else 'Waiting for complete image/prompt records')
+            + (f"\nRetry in {retry}s · U to retry now" if retry else '\nU: retry failed upload'))
         counts = self.session.counts()
         total = self.config['generation']['samples']
         prompts = self.session.db.execute('SELECT COUNT(*) FROM jobs WHERE prompt IS NOT NULL').fetchone()[0]
@@ -147,11 +154,13 @@ class GenerationApp(App):
         llm_failed = self.session.db.execute("SELECT COUNT(*) FROM jobs WHERE state='failed' AND prompt IS NULL").fetchone()[0]
         active = any(self.pipeline.active.values())
         if self.closing:
-            status = 'Saving — waiting for active requests to finish…'
+            status = ('Saving — draining Hugging Face uploads…' if not active and upload['enabled'] and upload['pending']
+                      else 'Saving — finishing active requests…')
         elif self.pipeline.paused:
             status = 'Pausing — finishing active requests…' if active else 'Paused — safe to exit and resume later'
         elif done == total:
-            status = 'Complete — originals, transparent images and prompts saved'
+            status = ('Images complete — Hugging Face uploads pending' if upload['enabled'] and upload['pending']
+                      else 'Complete — originals, transparent images and prompts saved')
         else:
             status = 'Running — prompt and image workers operate concurrently'
         self.query_one('#summary', Static).update(status)
@@ -191,6 +200,11 @@ class GenerationApp(App):
         if self.pipeline and not self.closing:
             self.pipeline.resume() if self.pipeline.paused else self.pipeline.pause()
             self.refresh_progress()
+
+    def action_retry_upload(self):
+        if self.pipeline and self.pipeline.uploader and not self.closing:
+            self.pipeline.uploader.retry()
+            self.record('upload', 'Upload retry requested (resume first if paused).')
 
     def action_retry(self):
         if self.pipeline and not self.closing:

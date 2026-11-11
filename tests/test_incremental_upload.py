@@ -86,6 +86,54 @@ class IncrementalUploadTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(p.upload_snapshot()['status'],'stopped')
             session.close()
 
+    async def test_blocked_upload_does_not_block_prompt_or_image_workers(self):
+        import threading
+        from incremental_upload import report
+        with tempfile.TemporaryDirectory() as tmp:
+            settings=config();settings['huggingface']['batch_size']=1
+            session=Session(settings,Path(tmp));events=[]
+            p=Pipeline(session,lambda stage,message:events.append((stage,message)))
+            entered=threading.Event();release=threading.Event()
+            llm_calls=0
+            def llm(draft,*args):
+                nonlocal llm_calls
+                llm_calls+=1
+                if llm_calls==3 and not entered.wait(5):raise TimeoutError('uploader did not start')
+                return draft
+            def image(remote,stem,*args):
+                if remote=='original' and stem=='photoId_00002' and not entered.wait(5):raise TimeoutError('uploader did not start')
+                return PNG
+            def blocked(*args):
+                report('Uploading test shard')
+                entered.set()
+                if not release.wait(5):raise TimeoutError('test timed out')
+            with patch('generation_session.submit_image',return_value='original'),patch('generation_session.submit_background',return_value='background'),patch('generation_session.wait_image',side_effect=image),patch('generation_session.finalize_prompt',side_effect=llm),patch('incremental_upload.send_shard',side_effect=blocked):
+                p.start()
+                try:
+                    await until(lambda:entered.is_set() and session.counts().get('done')==3)
+                    self.assertEqual(p.upload_snapshot()['uploaded'],0)
+                    self.assertEqual(p.upload_snapshot()['status'],'uploading')
+                    self.assertTrue(any(stage=='upload' and 'test shard' in message for stage,message in events))
+                    self.assertFalse(any(stage=='image' and 'Hugging Face' in message for stage,message in events))
+                finally:
+                    release.set()
+                await until(lambda:p.upload_snapshot()['uploaded']==3)
+                await p.stop()
+            session.close()
+
+    async def test_retry_now_bypasses_retry_countdown(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            session=Session(config(),Path(tmp));complete(session,[1,2]);u=LiveUploader(Pipeline(session))
+            with patch('incremental_upload.send_shard',side_effect=[TimeoutError('offline'),None]):
+                u.start()
+                await until(lambda:u.status=='retrying')
+                self.assertGreater(u.snapshot()['retry_in_seconds'],0)
+                self.assertEqual(u.snapshot()['batch_records'],2)
+                u.retry()
+                await until(lambda:u.snapshot()['uploaded']==2)
+                await u.stop()
+            session.close()
+
     async def test_paused_uploads_and_shutdown_flush(self):
         with tempfile.TemporaryDirectory() as tmp:
             session=Session(config(),Path(tmp));complete(session,[1])

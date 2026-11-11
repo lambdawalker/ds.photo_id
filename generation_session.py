@@ -296,7 +296,7 @@ class Pipeline:
                 self.uploader.start()
             except Exception as error:
                 self.upload_error = str(error)
-                self.notify('image', f'Hugging Face configuration error: {error}')
+                self.notify('upload', f'Hugging Face configuration error: {error}')
         self.tasks = [asyncio.create_task(self._worker('llm')), asyncio.create_task(self._worker('image'))]
         if self.session.config.get('comfyui', {}).get('cleanup', {}).get('enabled', False):
             self.tasks.append(asyncio.create_task(self._cleanup_worker()))

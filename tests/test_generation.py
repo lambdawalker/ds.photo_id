@@ -263,7 +263,7 @@ class UITests(unittest.IsolatedAsyncioTestCase):
                 await until(lambda: app.pipeline is not None)
                 await until(lambda: app.session.counts().get('done') == 5)
                 await pilot.pause()
-                self.assertEqual(len(app.query('ProgressBar')), 2)
+                self.assertEqual(len(app.query('ProgressBar')), 3)
                 await pilot.press('space')
                 self.assertTrue(app.pipeline.paused)
                 await pilot.press('space')

@@ -1,5 +1,7 @@
 """Durable, idempotent Parquet batches for a dedicated Hugging Face dataset."""
 import asyncio
+from contextvars import ContextVar
+import math
 from io import BytesIO
 import json
 from pathlib import Path
@@ -7,6 +9,15 @@ import time
 import uuid
 
 from file_storage import atomic_write
+
+_reporter = ContextVar('upload_progress_reporter', default=None)
+
+
+def report(phase):
+    callback = _reporter.get()
+    if callback:
+        callback(phase)
+
 
 CARD = '''---
 live_upload_layout: ds-photo-id-v1
@@ -51,6 +62,7 @@ def send_shard(repo_id, private, path, remote_path):
     disable_progress_bars()
     api = HfApi()
     from huggingface_hub.errors import HfHubHTTPError, LocalTokenNotFoundError
+    report('Creating/checking dataset')
     try:
         api.create_repo(repo_id, repo_type='dataset', private=private, exist_ok=True)
     except LocalTokenNotFoundError as error:
@@ -62,6 +74,7 @@ def send_shard(repo_id, private, path, remote_path):
                 'with an account that has permission to create datasets in this namespace.'
             ) from error
         raise
+    report('Checking repository layout')
     head = api.repo_info(repo_id, repo_type='dataset').sha
     files = api.list_repo_files(repo_id, repo_type='dataset', revision=head)
     operations = [CommitOperationAdd(path_in_repo=remote_path, path_or_fileobj=str(path))]
@@ -73,6 +86,7 @@ def send_shard(repo_id, private, path, remote_path):
         card = Path(hf_hub_download(repo_id, 'README.md', repo_type='dataset', revision=head)).read_text(encoding='utf-8')
         if 'live_upload_layout: ds-photo-id-v1' not in card:
             raise ValueError('Choose a new repo_id: this dataset is not an incremental portrait dataset')
+    report('Uploading shard and committing')
     api.create_commit(repo_id, repo_type='dataset', operations=operations,
                       commit_message=f'Add portrait batch {path.stem}', parent_commit=head)
 
@@ -106,7 +120,19 @@ class LiveUploader:
         self.changed = asyncio.Event()
         self.stopping = False
         self.status, self.error, self.task = 'waiting', None, None
+        self.phase = 'Waiting for completed portraits'
+        self.current_batch = None
+        self.batch_records = 0
+        self.next_retry = 0
         (self.session.output / 'uploads').mkdir(exist_ok=True)
+
+    def progress(self, phase):
+        self.phase = phase
+        self.pipeline.notify('upload', phase)
+
+    def retry(self):
+        self.next_retry = 0
+        self.changed.set()
 
     def start(self):
         self.task = asyncio.create_task(self.run())
@@ -127,7 +153,9 @@ class LiveUploader:
                                    "WHERE i.repo=? AND b.status='uploaded'", (self.repo,)).fetchone()[0]
         return {'enabled': True, 'repo_id': self.repo, 'uploaded': uploaded,
                 'pending': max(0, self.session.counts().get('done', 0)-uploaded),
-                'status': self.status, 'error': self.error}
+                'status': self.status, 'error': self.error, 'phase': self.phase,
+                'current_batch': self.current_batch, 'batch_records': self.batch_records,
+                'retry_in_seconds': max(0, math.ceil(self.next_retry-time.monotonic())) if self.status == 'retrying' else 0}
 
     def next_batch(self):
         return self.db.execute("SELECT * FROM upload_batches WHERE repo=? AND status='pending' ORDER BY rowid LIMIT 1", (self.repo,)).fetchone()
@@ -155,7 +183,8 @@ class LiveUploader:
         return records
 
     async def run(self):
-        first_pending, next_retry = None, 0
+        first_pending = None
+        self.progress(f'Uploader ready: {self.repo}')
         while True:
             self.changed.clear()
             pending, jobs = self.next_batch(), self.unassigned()
@@ -164,30 +193,41 @@ class LiveUploader:
                 first_pending = now
             all_done = self.session.counts().get('done', 0) == self.session.config['generation']['samples']
             due = len(jobs) >= self.batch_size or (first_pending is not None and now-first_pending >= self.interval) or all_done or self.stopping
-            if (self.stopping or not self.pipeline.paused) and (pending or (jobs and due)) and (self.stopping or now >= next_retry):
+            if (self.stopping or not self.pipeline.paused) and (pending or (jobs and due)) and (self.stopping or now >= self.next_retry):
                 batch = pending or self.prepare_batch(jobs)
                 path = self.session.output / 'uploads' / f'{batch["id"]}.parquet'
                 try:
                     self.status = 'uploading'
+                    self.current_batch = batch['id']
+                    self.batch_records = len(json.loads(batch['job_ids']))
+                    self.progress(f'Preparing batch {self.current_batch[:12]} ({self.batch_records} portraits)')
                     if not path.is_file():
                         await asyncio.to_thread(make_shard, path, self.records(batch))
-                    await asyncio.to_thread(send_shard, self.repo, self.config.get('private', True), path, batch['remote_path'])
+                    loop = asyncio.get_running_loop()
+                    context_token = _reporter.set(lambda phase: loop.call_soon_threadsafe(self.progress, phase))
+                    try:
+                        await asyncio.to_thread(send_shard, self.repo, self.config.get('private', True), path, batch['remote_path'])
+                    finally:
+                        _reporter.reset(context_token)
                     with self.db:
                         self.db.execute("UPDATE upload_batches SET status='uploaded',error=NULL WHERE id=?", (batch['id'],))
                     self.error, self.status = None, 'waiting'
-                    self.pipeline.notify('image', f'Hugging Face: uploaded {len(json.loads(batch["job_ids"]))} portraits to {self.repo}')
+                    self.pipeline.notify('upload', f'Hugging Face: uploaded {len(json.loads(batch["job_ids"]))} portraits to {self.repo}')
                     try:
                         path.unlink(missing_ok=True)
                     except OSError:
                         pass  # acknowledged cache files can be removed later
+                    self.current_batch, self.batch_records = None, 0
+                    self.phase = 'Waiting for completed portraits'
                     first_pending = None
                     continue
                 except Exception as error:
                     self.error, self.status = str(error), 'retrying'
+                    self.phase = 'Upload failed; waiting to retry'
                     with self.db:
                         self.db.execute('UPDATE upload_batches SET error=? WHERE id=?', (self.error, batch['id']))
-                    self.pipeline.notify('image', f'Hugging Face upload deferred: {error}')
-                    next_retry = time.monotonic() + self.retry_delay
+                    self.pipeline.notify('upload', f'Hugging Face upload deferred: {error}')
+                    self.next_retry = time.monotonic() + self.retry_delay
                     if self.stopping:
                         break
             if self.stopping:
@@ -199,3 +239,4 @@ class LiveUploader:
             except asyncio.TimeoutError:
                 pass
         self.status = 'stopped'
+        self.phase = 'Saved for retry on next run' if self.error else 'Uploads drained'

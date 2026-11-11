@@ -16,7 +16,7 @@ class Dashboard:
     def __init__(self, session, pipeline, config):
         self.session, self.pipeline = session, pipeline
         self.config = config
-        self.logs = {stage: deque(maxlen=2000) for stage in ('llm', 'image')}
+        self.logs = {stage: deque(maxlen=2000) for stage in ('llm', 'image', 'upload')}
         self.loop = asyncio.get_running_loop()
         self.original_times = {}
         self.server = None
@@ -63,6 +63,10 @@ class Dashboard:
         elif action == 'retry':
             self.pipeline.retry()
             self.pipeline.resume()
+        elif action == 'retry-upload':
+            if not self.pipeline.uploader:
+                raise ValueError('Uploader is not enabled')
+            self.pipeline.uploader.retry()
         else:
             raise ValueError('Unknown action')
         return {'ok': True}
@@ -126,7 +130,7 @@ class Dashboard:
                 if (not self.valid_host() or self.headers.get('X-Dashboard') != '1'
                         or (origin and origin != 'http://' + self.headers.get('Host', ''))):
                     return self.respond(403, {'error': 'Same-origin dashboard requests only'})
-                match = re.fullmatch(r'/api/(pause|resume|retry)', self.path)
+                match = re.fullmatch(r'/api/(pause|resume|retry|retry-upload)', self.path)
                 if not match:
                     return self.respond(404, {'error': 'Unknown action'})
                 try:
