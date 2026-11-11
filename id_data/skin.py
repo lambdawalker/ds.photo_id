@@ -24,6 +24,16 @@ SKIN_TEXTURES_RARE = [
 ]
 
 
+# Coverage choices, not prevalence estimates; pigmentation is independent of skin tone.
+BIRTHMARK_PROBABILITY = 0.15
+BIRTHMARK_TYPES = {
+    "light-brown patch": "a flat light-brown birthmark with gently irregular edges",
+    "dark-brown patch": "a flat dark-brown birthmark with softly defined edges",
+    "pink-red patch": "a flat pink-red birthmark with diffuse edges",
+    "red-purple patch": "a flat red-purple birthmark with irregular edges",
+}
+BIRTHMARK_LOCATIONS = ["left cheek", "right cheek", "left temple", "right temple", "forehead", "side of the upper neck"]
+
 def get_skin(age, use_rare=False):
     skin_tone = f"{random.choice(SKIN_DEPTHS)} with {random.choice(SKIN_UNDERTONES)} undertone"
 
@@ -41,7 +51,15 @@ def get_skin(age, use_rare=False):
     else:
         aging_note = random.choice(["pronounced fine lines and crow's feet", "more defined facial lines", "slight age-related skin texture changes"])
 
+    birthmark = {"type": "none", "location": None, "size": None, "description": ""}
+    if random.random() < BIRTHMARK_PROBABILITY:
+        kind = random.choice(list(BIRTHMARK_TYPES))
+        location = random.choice(BIRTHMARK_LOCATIONS)
+        size = random.choice(["small", "medium-sized", "large"])
+        birthmark = {"type": kind, "location": location, "size": size,
+                     "description": f"{BIRTHMARK_TYPES[kind]} on the {location}, {size} in extent"}
     return {
+        "birthmark": birthmark,
         "tone": skin_tone,
         "texture": skin_texture,
         "aging_note": aging_note

@@ -28,7 +28,13 @@ NOSE_BRIDGES = [
     "a high bridge", "a gently concave bridge", "a softly convex bridge",
     "a bridge with a subtle dorsal hump",
 ]
-NOSE_TIPS = ["a rounded tip", "a softly squared tip", "a subtly upturned tip", "a downward-pointing tip"]
+NOSE_TIPS = [
+    "a rounded tip", "a softly squared tip", "a subtly upturned tip", "a downward-pointing tip",
+    "a softly bulbous tip", "a narrow defined tip", "a broad rounded tip", "a gently projecting tip",
+    "a short softly lifted tip", "a gently bifid tip",
+]
+NOSE_WIDTHS = ["a narrow nose base", "a medium-width nose base", "a broad nose base", "a very broad nose base"]
+NOSTRILS = ["small rounded nostrils", "oval nostrils", "wide softly flared nostrils", "narrow nostrils", "slightly asymmetric nostrils"]
 EAR_SIZES = ["small ears", "medium-sized ears", "large ears"]
 EAR_LOBES = ["attached earlobes", "partially attached earlobes", "free earlobes"]
 FACIAL_DETAILS = [
@@ -40,6 +46,7 @@ FACIAL_DETAILS = [
 def get_face(eye_shape=None, use_rare=False):
     shape = random.choice(list(FACE_PROFILES))
     forehead, cheeks, jaw = FACE_PROFILES[shape]
+    width, nostrils = random.choice(NOSE_WIDTHS), random.choice(NOSTRILS)
     return {
         "shape": shape,
         "forehead": forehead,
@@ -47,7 +54,9 @@ def get_face(eye_shape=None, use_rare=False):
         "jaw": jaw,
         "brow": f"{random.choice(BROW_DENSITIES)} {random.choice(BROW_CURVES)} brows",
         "mouth": f"{random.choice(MOUTH_WIDTHS)} with {random.choice(LIP_SHAPES)}",
-        "nose": f"{random.choice(NOSE_BRIDGES)} and {random.choice(NOSE_TIPS)}",
+        "nose": f"{random.choice(NOSE_BRIDGES)}, {random.choice(NOSE_TIPS)}, {width}, and {nostrils}",
+        "nose_width": width,
+        "nostrils": nostrils,
         "ear": f"{random.choice(EAR_SIZES)} with {random.choice(EAR_LOBES)}",
         "detail": random.choice(FACIAL_DETAILS) if use_rare else "",
     }

@@ -31,7 +31,7 @@ FRAMING = (
     "Keep the entire head and chin inside the frame. Show the neck and upper shoulders "
     "at the bottom edge; the shoulders extend beyond the left and right edges. "
     "Only the neckline and uppermost part of the clothing are visible. "
-    "Eyes look directly into the camera, head upright, face fully visible, "
+    "Head generally facing the camera with only subtle pose variation, face fully visible, "
     "plain light-gray background, even soft lighting."
 )
 NEGATIVE_PROMPT = (
@@ -73,7 +73,7 @@ def finalize_prompt(draft, required_phrases, llm):
     payload = {
         "model": llm["model"],
         "temperature": 0.1,
-        "max_tokens": 512,
+        "max_tokens": 1024,
         "messages": [
             {
                 "role": "system",
@@ -135,21 +135,32 @@ def prepare_prompt(age, prompt_seed, template, include_data=False):
     draft = " ".join(template.render(**data).split())
     required = [
         f"{age} years old", data["gender"], data["skin"]["tone"], data["face"]["shape"],
-        data["face"]["brow"], data["eyes"]["color"], data["skin"]["texture"],
+        data["face"]["brow"], data["skin"]["texture"],
         data["skin"]["aging_note"], data["clothing"]["fit"], data["clothing"]["fabric"],
         data["face"]["forehead"], data["face"]["cheeks"], data["face"]["jaw"],
         data["face"]["nose"], data["face"]["mouth"], data["face"]["ear"],
         data["eyes"]["shape"], data["eyes"]["eyelids"], data["eyes"]["spacing"],
     ]
+    required.extend(phrase for phrase in (
+        data["metadata"]["expression"], data["build"]["description"],
+        data["skin"]["birthmark"]["description"], data["eyes"]["vision"]["description"],
+    ) if phrase)
+    if data["eyes"]["vision"]["eye_appearance"] != "opaque":
+        required.append(data["eyes"]["color"])
     required.extend(f"{piece['color']} {piece['garment']}" for piece in data["clothing"]["pieces"])
     hair = data["hair"]
     if hair["style"] != "bald":
         required.extend(phrase for phrase in (hair["color"], hair["texture"], hair["style"], hair["gray_desc"]) if phrase)
     required.extend(phrase for phrase in (
-        hair["baldness_note"], hair["facial_hair"], data["face"]["detail"],
+        hair["baldness_note"], hair["facial_hair"], hair["stray_hair"], data["face"]["detail"],
         data["metadata"]["glasses"], data["metadata"]["glare"],
-        data["metadata"]["hat"] or data["metadata"]["extra_headwear"],
+        data["metadata"]["hat"], data["metadata"]["extra_headwear"],
+        data["clothing"]["condition"],
     ) if phrase)
+    required.extend(data["metadata"][key] for key in (
+        "lens", "lighting", "quality_profile", "motion_hint", "head_tilt", "head_yaw",
+        "shoulders", "grooming", "makeup", "jewelry", "body_detail",
+    ) if data["metadata"][key])
     return (draft, required, data) if include_data else (draft, required)
 
 

@@ -9,6 +9,16 @@ from .metadata import get_metadata, GENDERS
 from .skin import get_skin
 
 
+# Describe visible build rather than inventing kilograms or BMI from a headshot.
+BUILD_PROFILES = {
+    "slender": "a slender build with a lean neck and lightly defined shoulder contours",
+    "lean": "a lean build with a moderately slim neck and softly defined shoulders",
+    "medium": "a medium build with a moderately full neck and balanced shoulder contours",
+    "broad": "a broad build with a sturdy neck and broad upper shoulders",
+    "full": "a full build with a softly full neck and rounded upper shoulder contours",
+    "very_full": "a very full build with a thick softly contoured neck and full upper shoulders",
+}
+
 def generate_sample_data(age):
     gender = random.choice(GENDERS)
 
@@ -19,8 +29,10 @@ def generate_sample_data(age):
     hair = get_hair(gender, age)
     clothing = get_clothing(gender)
     metadata = get_metadata(gender)
+    build_category = random.choice(list(BUILD_PROFILES))
 
     return {
+        "build": {"category": build_category, "description": BUILD_PROFILES[build_category]},
         "age": age,
         "gender": gender,
         "ancestry": ancestry,

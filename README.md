@@ -231,3 +231,37 @@ The preview prints JSON with garment roles, colors, palette names and the final 
 - `tests/`: offline regression suite.
 
 The obsolete Flux graph, separate full-dataset publishing script, and token-based server cleanup extension have been removed. Existing session databases and generated files do not need migration for this cleanup.
+
+## Portrait diversity and prompt coverage
+
+New sessions sample 17 expressions, including neutral, restrained and broad smiles,
+thoughtful, serious, curious, concerned and mildly surprised expressions. Expressions
+are now rendered and required during LLM refinement. Nose variation independently
+covers bridge, tip, base width and nostril shape. Six uniformly sampled build profiles
+vary the visible neck and shoulder contours within the tight headshot; these are
+fictional appearance descriptions, not measured weight or BMI.
+
+Birthmarks are sampled for 15% of subjects, with four pigmentation descriptions,
+six facial/upper-neck locations and three sizes. Blindness is sampled for 5%, divided
+uniformly among four fictional profiles: no visible eye difference, unfocused gaze,
+one opaque eye, or opacity in both eyes. Blindness does not imply a particular visible
+appearance; these inputs are not diagnoses or labels verified from images. Eye color
+is omitted from the prompt when visible opacity is requested, and fixed framing does
+not require eye contact. These probabilities prioritize coverage, not prevalence.
+Adjust `BIRTHMARK_PROBABILITY` in `id_data/skin.py` and `BLINDNESS_PROBABILITY`
+in `id_data/eyes.py` to change them.
+
+Previously omitted visual inputs now reach the prompt and its required-phrase checks:
+stray hairs, jewelry, piercings/tattoos, makeup, grooming, head tilt/yaw, shoulders,
+lens, lighting, image quality, slight motion softness, clothing condition and both
+sampled head coverings. The LLM output budget is 1,024 tokens for the longer description;
+failed or incomplete rewrites still fall back to the complete template. Ancestry remains
+sampled context rather than a visual instruction. Clothing style/palette labels and
+component fields are represented through their actual garment descriptions.
+
+All new inputs are retained in the existing structured `sample` metadata, including
+`build`, `skin.birthmark`, `eyes.vision`, `face.nose_width` and `face.nostrils`.
+Existing sessions retain their sampled drafts and metadata; start a fresh output
+session to use this expanded sampler. Resuming does not resample saved subjects or
+regenerate completed portraits. No clinical condition or body measurement is inferred
+from generated images. Review outputs for prompt adherence and image artifacts.

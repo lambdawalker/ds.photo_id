@@ -7,7 +7,19 @@ EXPRESSIONS = [
     "soft approachable smile",
     "calm and composed",
     "friendly and professional",
-    "subtle closed-mouth smile"
+    "subtle closed-mouth smile",
+    "a broad relaxed smile with upper teeth visible",
+    "a small asymmetric smile with relaxed brows",
+    "a warm smile with gently raised cheeks",
+    "a restrained smile with lips gently pressed together",
+    "a thoughtful expression with relaxed lips",
+    "a serious expression with softly lowered brows",
+    "a mildly curious expression with slightly raised eyebrows",
+    "a gently amused expression with a small smile",
+    "a composed expression with lips slightly parted",
+    "a quietly confident expression with relaxed jaw",
+    "a slightly concerned expression with gently drawn brows",
+    "a mildly surprised expression with raised brows and parted lips"
 ]
 
 LENSES = ["35mm", "50mm", "85mm"]
