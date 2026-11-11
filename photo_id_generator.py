@@ -240,12 +240,24 @@ def submit_background(workflow, image_path, comfyui):
 def main():
     parser = argparse.ArgumentParser(description="Generate synthetic portraits with Qwen Image 2.1.")
     parser.add_argument("--config", type=Path, default=ROOT / "config.yaml")
-    parser.add_argument("--web", action="store_true", help="Run the browser dashboard without the terminal UI")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--order-hf-shards", action="store_true", help="Order previously uploaded shards using the saved session journal")
+    modes.add_argument("--web", action="store_true", help="Run the browser dashboard without the terminal UI")
     args = parser.parse_args()
     with args.config.open(encoding="utf-8") as file:
         config = yaml.safe_load(file)
 
-    if args.web:
+    if args.order_hf_shards:
+        from generation_session import Session, Pipeline
+        from incremental_upload import LiveUploader, order_uploaded_batches
+        session = Session(config, args.config.resolve().parent)
+        try:
+            uploader = LiveUploader(Pipeline(session))
+            count = order_uploaded_batches(uploader)
+            print(f'Finished: {count} shard names ordered. No images were regenerated.')
+        finally:
+            session.close()
+    elif args.web:
         import asyncio
         from web_dashboard import run_web
         try:

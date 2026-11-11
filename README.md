@@ -178,6 +178,29 @@ Both dashboards have a dedicated **Hugging Face panel** with its own progress ba
 
 Use a dedicated empty repository or one created by this uploader. It refuses to mix shards into an older dataset layout. Existing dataset cards are preserved; first-time setup adds a card describing the `train` split. The uploader itself never changes or deletes existing remote shards.
 
+## Dataset row and shard order
+
+Old shard names used a random batch UUID, so filename ordering scrambled the upload batches. New shards include a zero-padded journal sequence: `data/train/SESSION-00000001-BATCH.parquet`, then `00000002`, and so on. Rows within a batch are selected in portrait-number order. Retries retain the same shard path and bytes.
+
+To order existing acknowledged shards, stop the generator and run from the same dataset/session configuration:
+
+```bash
+./run.sh --order-hf-shards
+# Windows: run.bat --order-hf-shards
+# Custom session: run.bat --config path/to/config.yaml --order-hf-shards
+```
+
+This uses the local `session.sqlite3` upload journal and your saved Hugging Face login. It atomically copies each old shard to its ordered name and removes the old reference on the server, in small commits. Images, rows and bytes stay unchanged. Progress is printed in the console. Lost acknowledgements can be retried; conflicting or missing files stop the repair. It only repairs uploaded batches recorded in this session's journal. A previously pending batch with a lost upload acknowledgement must finish retrying before it is eligible. Run the command again after that if needed. The dataset viewer may take time to refresh.
+
+Sequence filenames establish **batch creation order within a session**, not a strict global row order. A portrait recovered by a late retry can enter a later batch, and different sessions have different UUID prefixes. For strict portrait-number order across all loaded records, explicitly sort the stable IDs:
+
+```python
+from datasets import load_dataset
+portraits = load_dataset('lambdaWalker/ds.photo-id', split='train').sort('id')
+```
+
+IDs combine session UUID and a zero-padded `photoId_` number. Sorting groups sessions and sorts portrait numbers within each session; it does not infer chronological order across sessions. Dataset row position is not a permanent identity—use the `id` column when joining records.
+
 ## Portrait trait sampling
 
 Face outlines are sampled uniformly across ten descriptive profiles. Each profile specifies a compatible forehead, cheek contour and jaw. These are prompt design categories with overlapping boundaries. Skin depth and undertone, eye contour, eyelid crease and spacing, brow density and curve, nose bridge and tip, mouth width and lip shape, and ear size and lobes are sampled separately. Hair textures also have equal probability.

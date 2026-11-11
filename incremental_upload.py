@@ -91,6 +91,57 @@ def send_shard(repo_id, private, path, remote_path):
                       commit_message=f'Add portrait batch {path.stem}', parent_commit=head)
 
 
+def ordered_shard_path(session_id, sequence, batch_id):
+    return f'data/train/{session_id}-{sequence:08d}-{batch_id}.parquet'
+
+
+def order_uploaded_batches(uploader, progress=print):
+    """Rename acknowledged legacy shards server-side; preserve row bytes and counts."""
+    from huggingface_hub import HfApi, CommitOperationCopy, CommitOperationDelete, hf_hub_download
+    api = HfApi()
+    batches = uploader.db.execute(
+        "SELECT rowid AS sequence,* FROM upload_batches WHERE repo=? AND status='uploaded' ORDER BY rowid",
+        (uploader.repo,)).fetchall()
+    changes = []
+    for batch in batches:
+        target = ordered_shard_path(uploader.session_id, batch['sequence'], batch['id'])
+        if batch['remote_path'] == target:
+            continue
+        legacy = f'data/train/{uploader.session_id}-{batch["id"]}.parquet'
+        if batch['remote_path'] != legacy:
+            raise ValueError(f'Unexpected journal shard path: {batch["remote_path"]}')
+        changes.append((batch['id'], legacy, target))
+    renamed = 0
+    for offset in range(0, len(changes), 25):
+        group = changes[offset:offset+25]
+        head = api.repo_info(uploader.repo, repo_type='dataset').sha
+        files = set(api.list_repo_files(uploader.repo, repo_type='dataset', revision=head))
+        card = Path(hf_hub_download(uploader.repo, 'README.md', repo_type='dataset', revision=head)).read_text(encoding='utf-8')
+        if 'live_upload_layout: ds-photo-id-v1' not in card:
+            raise ValueError('Not an incremental portrait dataset')
+        operations = []
+        for batch_id, source, target in group:
+            if target in files:
+                if source in files:
+                    raise ValueError(f'Both source and ordered shard exist: {source}')
+                continue  # previous atomic rename succeeded but acknowledgement was lost
+            if source not in files:
+                raise ValueError(f'Uploaded shard is missing: {source}')
+            operations.extend([
+                CommitOperationCopy(src_path_in_repo=source, path_in_repo=target, src_revision=head),
+                CommitOperationDelete(path_in_repo=source),
+            ])
+        if operations:
+            api.create_commit(uploader.repo, repo_type='dataset', operations=operations,
+                              commit_message='Order portrait shards by batch sequence', parent_commit=head)
+        with uploader.db:
+            uploader.db.executemany('UPDATE upload_batches SET remote_path=? WHERE id=?',
+                                    [(target,batch_id) for batch_id,source,target in group])
+        renamed += len(group)
+        progress(f'Ordered {renamed}/{len(changes)} shards in {uploader.repo}')
+    return renamed
+
+
 class LiveUploader:
     def __init__(self, pipeline):
         self.pipeline, self.session = pipeline, pipeline.session
@@ -163,7 +214,8 @@ class LiveUploader:
     def prepare_batch(self, jobs):
         batch_id = uuid.uuid4().hex
         ids = [row['id'] for row in jobs]
-        remote = f'data/train/{self.session_id}-{batch_id}.parquet'
+        sequence = self.db.execute('SELECT COALESCE(MAX(rowid),0)+1 FROM upload_batches').fetchone()[0]
+        remote = ordered_shard_path(self.session_id, sequence, batch_id)
         with self.db:
             self.db.execute('INSERT INTO upload_batches(id,repo,job_ids,remote_path) VALUES(?,?,?,?)',
                             (batch_id, self.repo, json.dumps(ids), remote))
