@@ -22,6 +22,32 @@ from photo_id_generator import (
 )
 
 
+def selected_prompt_values(sample):
+    """Export actual prompt selections, excluding sampling policy and execution data."""
+    if not sample:
+        return {}
+    values = {key: sample[key] for key in ('age', 'gender', 'build', 'face') if key in sample}
+    values['race_ethnicity'] = sample.get('race_ethnicity', sample.get('ancestry'))
+    values['skin'] = {key: value for key, value in sample['skin'].items()
+                      if key != 'birthmark' or value.get('description')}
+    eyes = sample['eyes']
+    values['eyes'] = {key: eyes[key] for key in ('shape', 'eyelids', 'spacing')}
+    if eyes.get('vision', {}).get('eye_appearance') != 'opaque':
+        values['eyes']['color'] = eyes['color']
+    for key in ('vision', 'cataracts'):
+        if eyes.get(key, {}).get('description'):
+            values['eyes'][key] = {name: value for name, value in eyes[key].items() if name != 'age_band'}
+    hair = sample['hair']
+    hair_keys = ('style', 'color', 'texture', 'gray_desc') if hair['style'] != 'bald' else ()
+    values['hair'] = {key: hair[key] for key in (*hair_keys, 'baldness_note', 'facial_hair', 'stray_hair') if hair.get(key)}
+    values['clothing'] = {key: sample['clothing'][key] for key in ('pieces', 'fit', 'fabric', 'condition')}
+    values['metadata'] = {key: value for key, value in sample['metadata'].items() if value and key != 'gender'}
+    condition = sample.get('facial_condition', {})
+    if condition.get('description'):
+        values['facial_condition'] = {key: value for key, value in condition.items() if key != 'label_status'}
+    return values
+
+
 class Session:
     def __init__(self, config, config_dir):
         self.config = config
@@ -64,7 +90,7 @@ class Session:
                     if name not in columns:
                         self.db.execute(f'ALTER TABLE jobs ADD COLUMN {name} {definition}')
             self._migrate_layout()
-            for name in ('original', 'transparent', 'prompts', 'parameters'):
+            for name in ('original', 'transparent', 'prompts', 'parameters', 'metadata', 'draft_prompts'):
                 (self.output / name).mkdir(parents=True, exist_ok=True)
             with self.db:
                 self.db.execute('INSERT OR IGNORE INTO meta VALUES(?,?)',
@@ -240,14 +266,20 @@ class Session:
             'sample': None, 'prompt_seed': None, 'batch': None,
             'provenance': 'legacy_partial',
             'missing_history': 'Structured traits, prompt seed and execution settings were not saved by the older generator.'}
-        record = {**metadata, 'schema_version': 1, 'id': job['stem'],
-                  'image_seed': None if metadata.get('image_seed_unknown') else job['image_seed'], 'draft_prompt': job['draft'],
-                  'required_phrases': json.loads(job['required']), 'prompt': job['prompt'],
-                  'files': {'original': self.paths(job)[0].relative_to(self.output).as_posix(),
-                            'transparent': self.transparent_path(job).relative_to(self.output).as_posix(),
-                            'prompt': f'prompts/{job["stem"]}.txt'}}
-        path = self.output / 'parameters' / f'{job["stem"]}.json'
-        atomic_write(path, (json.dumps(record, indent=2, ensure_ascii=False) + '\n').encode('utf-8'))
+        record = {
+            'id': job['stem'],
+            'image_seed': None if metadata.get('image_seed_unknown') else job['image_seed'],
+            'prompt_seed': metadata.get('prompt_seed'),
+            'provenance': metadata.get('provenance', 'legacy_partial'),
+            'image_requested_at': metadata.get('image_requested_at'),
+            'prompt_finalization': metadata.get('prompt_finalization'),
+        }
+        for directory, content in (
+            ('metadata', record), ('parameters', selected_prompt_values(metadata.get('sample'))),
+        ):
+            path = self.output / directory / f'{job["stem"]}.json'
+            atomic_write(path, (json.dumps(content, indent=2, ensure_ascii=False) + '\n').encode('utf-8'))
+        atomic_write(self.output / 'draft_prompts' / f'{job["stem"]}.txt', job['draft'].encode('utf-8'))
 
     def record_time(self, stage, seconds):
         with self.db:

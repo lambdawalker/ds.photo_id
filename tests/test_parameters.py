@@ -10,12 +10,14 @@ from test_generation import CONFIG, PNG, until
 
 
 class ParametersTests(unittest.IsolatedAsyncioTestCase):
-    async def test_exact_sample_and_execution_survive_restart(self):
+    async def test_selected_values_metadata_and_draft_survive_restart(self):
         with tempfile.TemporaryDirectory() as root:
             config = copy.deepcopy(CONFIG)
             config['generation']['samples'] = 1
             session = Session(config, Path(root))
-            sample = json.loads(session.next('pending')['parameters'])['sample']
+            sampled = session.next('pending')
+            sample = json.loads(sampled['parameters'])['sample']
+            draft = sampled['draft']
             pipeline = Pipeline(session)
             with patch('generation_session.submit_image', return_value='original-job'), patch('generation_session.submit_background', return_value='bg-job'), patch('generation_session.wait_image', return_value=PNG):
                 pipeline.start()
@@ -23,21 +25,28 @@ class ParametersTests(unittest.IsolatedAsyncioTestCase):
                 await pipeline.stop()
             path = session.output / 'parameters/photoId_00001.json'
             data = json.loads(path.read_text())
-            self.assertEqual(data['sample'], sample)
-            self.assertEqual(data['sample']['age'], sample['age'])
-            self.assertIn('clothing', data['sample'])
-            self.assertIsInstance(data['prompt_seed'], int)
-            self.assertEqual(data['image_workflow']['458']['inputs']['seed'], data['image_seed'])
-            self.assertEqual(data['image_workflow']['452']['inputs']['prompt'], data['prompt'])
-            self.assertEqual(data['prompt'], (session.output / data['files']['prompt']).read_text())
-            self.assertEqual(data['background_removal']['workflow']['3']['class_type'], 'RemoveBackground')
-            self.assertEqual(data['prompt_finalization']['result'], 'template')
+            self.assertEqual(data['age'], sample['age'])
+            self.assertEqual(data['skin']['tone'], sample['skin']['tone'])
+            self.assertEqual(data['clothing']['pieces'], sample['clothing']['pieces'])
+            self.assertNotIn('sample', data)
+            self.assertNotIn('diversity_settings', data)
+            self.assertNotIn('id', data)
+            self.assertNotIn('draft_prompt', data)
+            metadata_path = session.output / 'metadata/photoId_00001.json'
+            metadata = json.loads(metadata_path.read_text())
+            self.assertEqual(set(metadata), {'id', 'image_seed', 'prompt_seed', 'provenance', 'image_requested_at', 'prompt_finalization'})
+            self.assertIsInstance(metadata['prompt_seed'], int)
+            self.assertEqual(metadata['prompt_finalization']['result'], 'template')
+            self.assertTrue(metadata['image_requested_at'])
+            self.assertEqual((session.output / 'draft_prompts/photoId_00001.txt').read_text(), draft)
+            self.assertNotIn('workflow', path.read_text() + metadata_path.read_text())
             session.close()
-            # Code/config changes must never resample already saved subject parameters.
+            path.write_text(json.dumps({'sample': sample, 'image_workflow': {'old': 'flow'}}))
             with patch('generation_session.prepare_prompt', side_effect=AssertionError('must not resample')):
                 session = Session(config, Path(root))
             try:
                 self.assertEqual(json.loads(path.read_text()), data)
+                self.assertEqual(json.loads(metadata_path.read_text()), metadata)
             finally:
                 session.close()
 
@@ -54,12 +63,11 @@ class ParametersTests(unittest.IsolatedAsyncioTestCase):
             with patch('generation_session.prepare_prompt', side_effect=AssertionError('must not resample')):
                 session = Session(config, Path(root))
             try:
-                data = json.loads((session.output / 'parameters/photoId_00001.json').read_text())
-                self.assertIsNone(data['sample'])
-                self.assertIsNone(data['prompt_seed'])
-                self.assertEqual(data['provenance'], 'legacy_partial')
-                self.assertNotIn('image_workflow', data)
-                self.assertEqual(data['prompt'], 'Saved legacy prompt')
+                self.assertEqual(json.loads((session.output / 'parameters/photoId_00001.json').read_text()), {})
+                metadata = json.loads((session.output / 'metadata/photoId_00001.json').read_text())
+                self.assertIsNone(metadata['prompt_seed'])
+                self.assertEqual(metadata['provenance'], 'legacy_partial')
+                self.assertEqual((session.output / 'prompts/photoId_00001.txt').read_text(), 'Saved legacy prompt')
             finally:
                 session.close()
 
@@ -72,10 +80,9 @@ class ParametersTests(unittest.IsolatedAsyncioTestCase):
             (output / 'prompts/photoId_00001.txt').write_text('Imported prompt')
             session = Session(copy.deepcopy(CONFIG), Path(root))
             try:
-                data = json.loads((output / 'parameters/photoId_00001.json').read_text())
-                self.assertIsNone(data['sample'])
-                self.assertIsNone(data['image_seed'])
-                self.assertEqual(data['draft_prompt'], '')
-                self.assertEqual(data['prompt'], 'Imported prompt')
+                self.assertEqual(json.loads((output / 'parameters/photoId_00001.json').read_text()), {})
+                metadata = json.loads((output / 'metadata/photoId_00001.json').read_text())
+                self.assertIsNone(metadata['image_seed'])
+                self.assertEqual((output / 'draft_prompts/photoId_00001.txt').read_text(), '')
             finally:
                 session.close()

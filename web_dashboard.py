@@ -42,7 +42,8 @@ class Dashboard:
             if job is None:
                 continue
             transparent = s.transparent_path({'stem': stem})
-            latest.append({'parameters': f'/parameters/{stem}.json' if (s.output / 'parameters' / f'{stem}.json').is_file() else None, 'stem': stem, 'prompt': job['prompt'], 'state': job['state'], 'error': job['error'],
+            latest.append({'metadata': f'/metadata/{stem}.json' if (s.output / 'metadata' / f'{stem}.json').is_file() else None,
+                           'draft_prompt': f'/draft_prompts/{stem}.txt' if (s.output / 'draft_prompts' / f'{stem}.txt').is_file() else None, 'parameters': f'/parameters/{stem}.json' if (s.output / 'parameters' / f'{stem}.json').is_file() else None, 'stem': stem, 'prompt': job['prompt'], 'state': job['state'], 'error': job['error'],
                            'original': f'/image/original/{s.image_path("original", stem).name}',
                            'transparent': f'/image/transparent/{transparent.name}' if transparent.is_file() else None})
         prompt_eta, image_eta, averages = p.estimates()
@@ -116,12 +117,18 @@ class Dashboard:
                     target = (directory / filename).resolve()
                     if target.parent == directory and target.is_file():
                         return self.respond(200, target.read_bytes(), 'image/webp' if target.suffix == '.webp' else 'image/png')
-                metadata = re.fullmatch(r'/parameters/(photoId_\d{5,}\.json)', path)
+                metadata = re.fullmatch(r'/(parameters|metadata)/(photoId_\d{5,}\.json)', path)
                 if metadata:
-                    directory = (dashboard.session.output / 'parameters').resolve()
-                    target = (directory / metadata[1]).resolve()
+                    directory = (dashboard.session.output / metadata[1]).resolve()
+                    target = (directory / metadata[2]).resolve()
                     if target.parent == directory and target.is_file():
                         return self.respond(200, target.read_bytes(), 'application/json')
+                draft = re.fullmatch(r'/draft_prompts/(photoId_\d{5,}\.txt)', path)
+                if draft:
+                    directory = (dashboard.session.output / 'draft_prompts').resolve()
+                    target = (directory / draft[1]).resolve()
+                    if target.parent == directory and target.is_file():
+                        return self.respond(200, target.read_bytes(), 'text/plain; charset=utf-8')
                 self.respond(404, {'error': 'Not found'})
 
             def do_POST(self):

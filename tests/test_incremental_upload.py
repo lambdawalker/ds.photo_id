@@ -47,7 +47,10 @@ class IncrementalUploadTests(unittest.IsolatedAsyncioTestCase):
                 dataset=Dataset.from_parquet(str(shard))
                 ids.extend(dataset['id'])
                 self.assertEqual(dataset[0]['image_transparent'].mode,'RGBA')
-                self.assertTrue(json.loads(dataset[0]['parameters'])['sample'])
+                self.assertIn('age', json.loads(dataset[0]['parameters']))
+                self.assertIn('image_seed', json.loads(dataset[0]['metadata']))
+                self.assertNotIn('workflow', dataset[0]['metadata'])
+                self.assertTrue(dataset[0]['draft_prompt'])
             self.assertEqual(len(set(ids)),3)
             session.close()
             session=Session(config(),Path(tmp));u=LiveUploader(Pipeline(session))
@@ -200,3 +203,67 @@ class HubCommitTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,'dedicated empty'):
                     send_shard('example/portraits',True,path,'data/train/batch.parquet')
                 api.create_commit.assert_not_called()
+
+    def test_nonempty_v1_dataset_is_not_mixed_with_split_records(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'batch.parquet';path.write_bytes(b'shard')
+            card=Path(tmp)/'README.md';card.write_text('live_upload_layout: ds-photo-id-v1')
+            with patch('huggingface_hub.HfApi') as factory, patch('huggingface_hub.hf_hub_download',return_value=str(card)):
+                api=factory.return_value;api.list_repo_files.return_value=['README.md','data/train/old.parquet']
+                with self.assertRaisesRegex(ValueError,'old parameter schema'):
+                    send_shard('example/portraits',True,path,'data/train/new.parquet')
+                api.create_commit.assert_not_called()
+
+    def test_empty_v1_card_is_upgraded_without_losing_custom_text(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'batch.parquet';path.write_bytes(b'shard')
+            card=Path(tmp)/'README.md';card.write_text('live_upload_layout: ds-photo-id-v1\nCustom card content')
+            with patch('huggingface_hub.HfApi') as factory, patch('huggingface_hub.hf_hub_download',return_value=str(card)):
+                api=factory.return_value;api.list_repo_files.return_value=['README.md','.gitattributes']
+                send_shard('example/portraits',True,path,'data/train/new.parquet')
+                operations=api.create_commit.call_args.kwargs['operations']
+                updated=next(op for op in operations if op.path_in_repo=='README.md').path_or_fileobj.decode()
+                self.assertIn('ds-photo-id-v2',updated)
+                self.assertIn('Custom card content',updated)
+
+    def test_v2_custom_card_is_preserved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'batch.parquet';path.write_bytes(b'shard')
+            card=Path(tmp)/'README.md';card.write_text('live_upload_layout: ds-photo-id-v2\nCustom card content')
+            with patch('huggingface_hub.HfApi') as factory, patch('huggingface_hub.hf_hub_download',return_value=str(card)):
+                api=factory.return_value;api.list_repo_files.return_value=['README.md','.gitattributes']
+                send_shard('example/portraits',True,path,'data/train/new.parquet')
+                operations=api.create_commit.call_args.kwargs['operations']
+                self.assertEqual([op.path_in_repo for op in operations],['data/train/new.parquet'])
+
+
+class SplitUploadTests(unittest.IsolatedAsyncioTestCase):
+    async def test_old_staged_shards_are_retained_and_not_uploaded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            session=Session(config(),Path(tmp));complete(session,[1,2])
+            uploader=LiveUploader(Pipeline(session))
+            batch=uploader.prepare_batch(uploader.unassigned())
+            path=session.output/'uploads'/f'{batch["id"]}.parquet'
+            Dataset.from_dict({'id':['legacy']}).to_parquet(str(path))
+            original=path.read_bytes()
+            with patch('incremental_upload.send_shard') as send:
+                uploader.start()
+                await until(lambda:uploader.status=='retrying')
+                await uploader.stop()
+                send.assert_not_called()
+            self.assertIn('old schema',uploader.error)
+            self.assertEqual(path.read_bytes(),original)
+            session.close()
+
+    async def test_modified_prompt_is_not_uploaded_with_unrelated_selections(self):
+        from incremental_upload import make_shard
+        with tempfile.TemporaryDirectory() as tmp:
+            session=Session(config(),Path(tmp));complete(session,[1,2])
+            uploader=LiveUploader(Pipeline(session))
+            batch=uploader.prepare_batch(uploader.unassigned())
+            records=uploader.records(batch)
+            Path(records[0]['prompt']).write_text('Modified outside the generator')
+            with self.assertRaisesRegex(ValueError,'mismatch'):
+                make_shard(Path(tmp)/'bad.parquet',records)
+            self.assertFalse((Path(tmp)/'bad.parquet').exists())
+            session.close()

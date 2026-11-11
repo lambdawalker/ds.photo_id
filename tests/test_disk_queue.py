@@ -31,7 +31,9 @@ class DiskQueueTests(unittest.IsolatedAsyncioTestCase):
                         stem=f'photoId_{i:05d}'
                         prompt=(session.output/'prompts'/f'{stem}.txt').read_text()
                         metadata=json.loads((session.output/'parameters'/f'{stem}.json').read_text())
-                        self.assertEqual(metadata['prompt'],prompt)
+                        self.assertIn('age',metadata)
+                        self.assertNotIn('prompt',metadata)
+                        self.assertTrue((session.output/'draft_prompts'/f'{stem}.txt').is_file())
                         self.assertTrue(prompt.strip())
                     pipeline.pause()
                 finally:

@@ -7,7 +7,10 @@ Generate synthetic ID-style portraits using Qwen Image 2.1 in ComfyUI. Each data
 | `image` | Image | The original generated portrait. |
 | `image_transparent` | Image | The same portrait with an RGBA transparent background. |
 | `prompt` | String | The original generation prompt saved with that portrait. |
-| `parameters` | String (JSON) | Structured subject traits and generation settings; null for older exports without a sidecar. |
+| `id` | String | Session UUID and portrait stem. |
+| `parameters` | String (JSON) | Only selected variables used to construct the portrait prompt. |
+| `metadata` | String (JSON) | Portrait ID, seeds, provenance, request time and LLM finalization details. |
+| `draft_prompt` | String | The original draft before LLM refinement. |
 
 ## Generate portraits
 
@@ -31,6 +34,10 @@ dataset/idPhoto/
 │   └── photoId_00001.txt
 ├── parameters/
 │   └── photoId_00001.json
+├── metadata/
+│   └── photoId_00001.json
+├── draft_prompts/
+│   └── photoId_00001.txt
 └── session.sqlite3
 ```
 
@@ -42,24 +49,67 @@ Restarting upgrades completed prompts that have not been submitted and have no o
 
 ## Image storage
 
-The supplied configuration saves **WebP at quality 90** for both image variants, preserving transparency. Configure `generation.image_storage.format` (`webp` or `png`), `quality` (0–100), and `lossless` (true/false). Encoding uses Pillow locally after PNG downloads. Changing the setting applies to missing/new images; existing PNGs remain intact and mixed PNG/WebP sessions resume normally. File paths and encoding settings are included in parameter JSON. Avoid keeping both PNG and WebP copies with the same stem in the same variant folder.
+The supplied configuration saves **WebP at quality 90** for both image variants, preserving transparency. Configure `generation.image_storage.format` (`webp` or `png`), `quality` (0–100), and `lossless` (true/false). Encoding uses Pillow locally after PNG downloads. Changing the setting applies to missing/new images; existing PNGs remain intact and mixed PNG/WebP sessions resume normally. Image encodings are stored in the images themselves; selected parameter JSON excludes storage settings. Avoid keeping both PNG and WebP copies with the same stem in the same variant folder.
 
 Clean server-side ComfyUI images manually after both local variants and their parameters JSON are saved. No cleanup extension or cleanup token is used. Server output names include unique request suffixes to prevent cached SaveImage results from referring to previously deleted files; local dataset stems stay unchanged.
 
-## Structured generation parameters
+## Selected parameters, generation metadata and drafts
 
-Every generated portrait has a matching `parameters/photoId_00001.json` record (`schema_version: 1`). This is intended as input to later fictional name, address and ID-detail generators. It contains:
+Each portrait uses the same filename stem across these folders:
 
-- `sample`: the complete sampled age, gender label, ancestry category, skin, face, eyes, hair, clothing/palette/pieces and accessories. These are intended synthetic generation inputs, not verified attributes measured from the image. Some sampled context (such as ancestry) is not rendered explicitly in the portrait prompt.
-- `prompt_seed`, `image_seed`, and batch size/seed; draft, required phrases and exact final positive prompt.
-- `prompt_finalization`: LLM model/API, thinking and temperature settings, and whether the final text was rewritten or the template was retained.
-- `image_workflow`: the actual submitted Qwen graph, including model filenames, sampler, scheduler, dimensions, seed, steps, CFG and negative prompt; `image_requested_at` is its UTC submission-attempt time.
-- `background_removal`: the saved removal graph and logical original-image path. Its upload filename is assigned separately on the server.
-- `files`: relative paths linking both images and the shared text prompt.
+| File | Contents |
+| --- | --- |
+| `parameters/photoId_00001.json` | Selected prompt variables directly at the root: age, gender, race/ethnicity, build, skin, face, eyes, hair, clothing pieces and appearance details. |
+| `metadata/photoId_00001.json` | Only `id`, `image_seed`, `prompt_seed`, `provenance`, `image_requested_at`, and `prompt_finalization`. |
+| `draft_prompts/photoId_00001.txt` | The sampled draft before LLM refinement. |
+| `prompts/photoId_00001.txt` | The exact final positive prompt used for generation. |
 
-Traits and prompt seeds are captured once at sampling and retained in SQLite. JSON is written atomically when prompts become ready and before each new image/removal submission. Restarting also exports records for existing originals. Older sessions did not save structured traits or actual execution settings: their records explicitly use `provenance: legacy_partial`, null sampled data and a missing-history explanation. They are never resampled or guessed from the image; new execution settings are added only when a new request is made. Updating this code cannot recover historical data that was not recorded.
+`parameters` has no enclosing `sample` object, seeds, probability settings, file paths,
+required-phrase list, prompt text or execution details. Optional selections not used by
+the prompt are omitted, including opaque-eye color and bald subjects' unused hair color.
+The `metadata` group inside selected parameters contains selected appearance controls
+such as expression, eyewear, grooming, pose and lighting, not execution metadata.
 
-The web explorer links to each JSON record. The upload worker includes it as a JSON string in `parameters` so downstream consumers can call `json.loads(record['parameters'])`. Records are uploaded only after their image/prompt files and JSON are complete and consistent. No names, addresses, birth dates or document numbers are generated at this stage.
+Generation metadata has this shape (values shown are illustrative):
+
+```json
+{
+  "id": "photoId_00001",
+  "image_seed": 6679292727990993,
+  "prompt_seed": 2053695854357871005,
+  "provenance": "captured_at_sampling",
+  "image_requested_at": "2026-11-11T05:09:43.891988+00:00",
+  "prompt_finalization": {
+    "enabled": true,
+    "model": "google/gemma-4-12b-qat",
+    "api": "lmstudio",
+    "temperature": 0.1,
+    "thinking": false,
+    "max_output_tokens": 4096,
+    "result": "rewritten"
+  }
+}
+```
+
+No ComfyUI workflows are included in the exported JSON or Hugging Face rows. The
+session journal still retains the internal state needed to resume remote work. Files
+are written atomically and re-exported from that journal on restart, without resampling
+saved subjects. Missing historical selections produce `{}` in parameters; unavailable
+execution values remain null and provenance is `legacy_partial`. Unknown traits are
+never inferred from the image. The web explorer links to all three separate records.
+
+Hugging Face layout **v2** embeds both images and adds `metadata` (JSON text) and
+`draft_prompt` (plain text) columns. Parse `parameters` and `metadata` with `json.loads`.
+The uploader checks prompt text against the session journal before encoding a new
+shard. Empty v1 repositories are upgraded while retaining their existing card. Existing
+v1 shards or old staged Parquet batches are blocked to prevent mixing incompatible
+schemas; use a new `huggingface.repo_id` and output directory, or run the destructive
+`--reset-data` command if you want to discard both datasets and start again. Existing
+uploaded batches are not automatically rewritten. Unacknowledged staged bytes remain
+unchanged so a lost upload acknowledgement cannot silently change the same batch.
+
+These are intended synthetic traits, not image-derived annotations. No names, addresses,
+birth dates or document numbers are generated at this stage.
 
 ## Background removal setup
 
@@ -170,9 +220,9 @@ Credentials use Hugging Face's saved login; no token is stored in YAML or the da
 | `interval_seconds` | 300 | Upload a smaller batch after five minutes of pending data. |
 | `retry_seconds` | 60 | Retry failed uploads after one minute. |
 
-Each row contains `id`, `image`, `image_transparent`, `prompt`, and `parameters` (JSON text). Both PNG/WebP image byte streams are embedded in Parquet; loading the dataset does not depend on your local paths. Row IDs combine a durable session UUID and the portrait stem so separate sessions do not collide.
+Each v2 row contains `id`, `image`, `image_transparent`, `prompt`, `parameters` (JSON text), `metadata` (JSON text), and `draft_prompt` (plain text). Both PNG/WebP image byte streams are embedded in Parquet; loading the dataset does not depend on your local paths. Row IDs combine a durable session UUID and the portrait stem so separate sessions do not collide.
 
-Only records with both images and saved parameters are eligible. New immutable shards are committed under `data/train/`. SQLite tracks batch membership, remote filenames and acknowledgements; interrupted uploads retry the same staged bytes at the same remote path. Keep `session.sqlite3` and the `uploads/` staging folder with the dataset until pending uploads succeed. Successful staging files are removed locally, while original images and metadata remain. Reopening a session catches up with existing completed records without duplicating acknowledged batches. Remote history deletion or manually removing uploaded shards is not automatically repaired.
+Only completed records with both images and their saved split records are eligible. New immutable shards are committed under `data/train/`. SQLite tracks batch membership, remote filenames and acknowledgements; interrupted uploads retry the same staged bytes at the same remote path. Keep `session.sqlite3` and the `uploads/` staging folder with the dataset until pending uploads succeed. Successful staging files are removed locally, while original images and metadata remain. Reopening a session catches up with existing completed records without duplicating acknowledged batches. Remote history deletion or manually removing uploaded shards is not automatically repaired.
 
 Both dashboards have a dedicated **Hugging Face panel** with its own progress bar, uploaded/pending counts, current batch and record count, processing phase, retry countdown, and scrolling error/activity log. Upload phases distinguish preparing a shard, creating/checking the dataset, checking repository layout, and uploading/committing. The uploader owns a separate asyncio task; Parquet encoding and Hub requests run in worker threads so prompts, images and UI updates continue during slow uploads. Press **U** in the terminal or **Retry upload** in the browser to bypass the retry countdown (resume first if paused). The terminal shows three columns on wide windows and stacks panels in narrower windows. During shutdown it explicitly reports when it is draining uploads. Network/login failures never pause image generation. Pause prevents starting another upload; an active upload finishes. Save & exit drains generation and then tries to upload all remaining records, including a partial final batch. If that attempt fails, data stays queued for the next run. Upload requests can extend shutdown time. The Hub dataset viewer may refresh later than the commit itself.
 
@@ -259,8 +309,8 @@ failed or incomplete rewrites still fall back to the complete template. The samp
 required phrases, alongside independently sampled skin tone and facial details. Clothing style/palette labels and
 component fields are represented through their actual garment descriptions.
 
-All new inputs are retained in the existing structured `sample` metadata, including
-`build`, `skin.birthmark`, `eyes.vision`, `face.nose_width` and `face.nostrils`.
+Selected inputs are retained directly in the parameters JSON, including
+`build`, `skin.birthmark`, `eyes.vision`, `face.nose_width` and `face.nostrils` when used.
 Existing sessions retain their sampled drafts and metadata; start a fresh output
 session to use this expanded sampler. Resuming does not resample saved subjects or
 regenerate completed portraits. No clinical condition or body measurement is inferred
@@ -284,7 +334,7 @@ Use `--config path/to/config.yaml` for another configuration. The command uses y
 existing Hugging Face login. It deletes remote `data/` files and squashes the dataset's
 main history, retaining `README.md` and `.gitattributes`. Additional remote branches/tags
 and unexpected files cause it to stop. It then deletes local images, prompts, parameters,
-queued upload shards and SQLite session state. The generator lock prevents resetting
+draft prompts, generation metadata, queued upload shards and SQLite session state. The generator lock prevents resetting
 an active local session. If the remote operation fails, local records remain; if a
 partial reset fails, leave generation stopped and run the command again.
 
@@ -350,15 +400,15 @@ both. Visible clouding is described behind the pupil with the colored iris retai
 not as a uniformly white eye. Cataracts do not automatically assign blindness.
 
 The existing broad ancestry labels now reach the prompt, including separate East,
-South and Southeast Asian categories and Pacific Islander ancestry. The same sampled
-label is saved as `sample.race_ethnicity` and `sample.ancestry` for compatibility.
+South and Southeast Asian categories and Pacific Islander ancestry. The sampled label is exported as `race_ethnicity`; the internal journal retains
+the original ancestry label for compatibility.
 These categories mix race, ethnicity and ancestry; Hispanic identity is not treated
 as a biological race. Labels are synthetic author inputs, not image-derived identities,
 and the independent appearance sampling is intended for diversity, not demographic fidelity.
 
-Configuration is in `generation.diversity`; resolved rates are saved in
-`sample.diversity_settings`. Selected condition and cataract profiles are saved in
-`sample.facial_condition` and `sample.eyes.cataracts`. Sampling/metadata tests cannot
+Configuration is in `generation.diversity`; resolved rates remain in the internal
+session journal rather than the selected-parameters export. Used condition and cataract
+profiles are exported as `facial_condition` and `eyes.cataracts`. Sampling/metadata tests cannot
 establish visual or medical fidelity: inspect generated images before using their labels.
 
 Reference descriptions:

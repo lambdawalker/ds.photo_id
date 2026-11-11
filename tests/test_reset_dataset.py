@@ -30,7 +30,7 @@ class ResetDatasetTests(unittest.TestCase):
             api.list_repo_refs.return_value = SimpleNamespace(tags=[], branches=[SimpleNamespace(name='main')])
             with patch('reset_dataset.HfApi', return_value=api), patch('reset_dataset.hf_hub_download') as download:
                 card = Path(root) / 'card.md'
-                card.write_text('live_upload_layout: ds-photo-id-v1')
+                card.write_text('live_upload_layout: ds-photo-id-v2')
                 download.return_value = str(card)
                 reset_dataset(self.config(), Path(root), progress=lambda message: None)
             operations = api.create_commit.call_args.kwargs['operations']

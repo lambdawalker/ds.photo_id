@@ -20,7 +20,7 @@ def report(phase):
 
 
 CARD = '''---
-live_upload_layout: ds-photo-id-v1
+live_upload_layout: ds-photo-id-v2
 configs:
 - config_name: default
   data_files:
@@ -31,7 +31,8 @@ configs:
 
 Fictional Qwen portraits with transparent versions and generation parameters.
 Rows are added in batches. Parameters describe intended inputs, not measured attributes.
-The parameters column contains JSON text. Image bytes are embedded in Parquet shards.
+Parameters contain only selected prompt variables; metadata contains execution details.
+Draft prompts are in draft_prompt. JSON fields are serialized as text. Image bytes are embedded in Parquet shards.
 '''
 
 
@@ -39,14 +40,19 @@ def make_shard(path, records):
     from datasets import Dataset, Features, Image, Value, disable_progress_bars
     disable_progress_bars()
     features = Features({'id': Value('string'), 'image': Image(), 'image_transparent': Image(),
-                         'prompt': Value('string'), 'parameters': Value('string')})
+                         'prompt': Value('string'), 'parameters': Value('string'),
+                         'metadata': Value('string'), 'draft_prompt': Value('string')})
     rows = []
     for record in records:
-        metadata = json.loads(Path(record['parameters']).read_text(encoding='utf-8'))
+        parameters = json.loads(Path(record['parameters']).read_text(encoding='utf-8'))
+        metadata = json.loads(Path(record['metadata']).read_text(encoding='utf-8'))
+        draft = Path(record['draft_prompt']).read_text(encoding='utf-8')
         prompt = Path(record['prompt']).read_text(encoding='utf-8')
-        if not prompt.strip() or metadata.get('prompt') != prompt:
-            raise ValueError(f'Prompt/parameters mismatch: {record["id"]}')
-        row = {'id': record['id'], 'prompt': prompt, 'parameters': json.dumps(metadata, ensure_ascii=False)}
+        if (not prompt.strip() or prompt != record.get('expected_prompt', prompt)
+                or metadata.get('id') != record['id'].rsplit('/', 1)[-1]):
+            raise ValueError(f'Prompt/metadata mismatch: {record["id"]}')
+        row = {'id': record['id'], 'prompt': prompt, 'parameters': json.dumps(parameters, ensure_ascii=False),
+               'metadata': json.dumps(metadata, ensure_ascii=False), 'draft_prompt': draft}
         for name in ('image', 'image_transparent'):
             image = Path(record[name])
             row[name] = {'path': image.name, 'bytes': image.read_bytes()}
@@ -84,8 +90,15 @@ def send_shard(repo_id, private, path, remote_path):
         operations.append(CommitOperationAdd(path_in_repo='README.md', path_or_fileobj=CARD.encode()))
     else:
         card = Path(hf_hub_download(repo_id, 'README.md', repo_type='dataset', revision=head)).read_text(encoding='utf-8')
-        if 'live_upload_layout: ds-photo-id-v1' not in card:
-            raise ValueError('Choose a new repo_id: this dataset is not an incremental portrait dataset')
+        if 'live_upload_layout: ds-photo-id-v2' not in card:
+            if 'live_upload_layout: ds-photo-id-v1' in card:
+                if any(name.startswith('data/') for name in files):
+                    raise ValueError('Dataset uses the old parameter schema. Use --reset-data or a new repo_id before uploading split records.')
+                card = card.replace('live_upload_layout: ds-photo-id-v1', 'live_upload_layout: ds-photo-id-v2')
+                card += '\nSplit records: parameters contains only selected prompt values; metadata contains execution details; draft_prompt contains the original draft. No ComfyUI flows are exported.\n'
+                operations.append(CommitOperationAdd(path_in_repo='README.md', path_or_fileobj=card.encode()))
+            else:
+                raise ValueError('Choose a new repo_id: this dataset is not an incremental portrait dataset')
     report('Uploading shard and committing')
     api.create_commit(repo_id, repo_type='dataset', operations=operations,
                       commit_message=f'Add portrait batch {path.stem}', parent_commit=head)
@@ -117,7 +130,7 @@ def order_uploaded_batches(uploader, progress=print):
         head = api.repo_info(uploader.repo, repo_type='dataset').sha
         files = set(api.list_repo_files(uploader.repo, repo_type='dataset', revision=head))
         card = Path(hf_hub_download(uploader.repo, 'README.md', repo_type='dataset', revision=head)).read_text(encoding='utf-8')
-        if 'live_upload_layout: ds-photo-id-v1' not in card:
+        if not any(f'live_upload_layout: ds-photo-id-v{version}' in card for version in (1, 2)):
             raise ValueError('Not an incremental portrait dataset')
         operations = []
         for batch_id, source, target in group:
@@ -231,7 +244,10 @@ class LiveUploader:
             image, prompt = self.session.paths(job)
             records.append({'id': f'{self.session_id}/{job["stem"]}', 'image': str(image),
                             'image_transparent': str(self.session.transparent_path(job)), 'prompt': str(prompt),
-                            'parameters': str(self.session.output / 'parameters' / f'{job["stem"]}.json')})
+                            'expected_prompt': job['prompt'],
+                            'parameters': str(self.session.output / 'parameters' / f'{job["stem"]}.json'),
+                            'metadata': str(self.session.output / 'metadata' / f'{job["stem"]}.json'),
+                            'draft_prompt': str(self.session.output / 'draft_prompts' / f'{job["stem"]}.txt')})
         return records
 
     async def run(self):
@@ -255,6 +271,10 @@ class LiveUploader:
                     self.progress(f'Preparing batch {self.current_batch[:12]} ({self.batch_records} portraits)')
                     if not path.is_file():
                         await asyncio.to_thread(make_shard, path, self.records(batch))
+                    from pyarrow.parquet import read_schema
+                    columns = await asyncio.to_thread(lambda: read_schema(path).names)
+                    if set(columns) != {'id', 'image', 'image_transparent', 'prompt', 'parameters', 'metadata', 'draft_prompt'}:
+                        raise ValueError('Staged batch uses the old schema. Use --reset-data or a new output_dir and repo_id; old staged bytes were retained.')
                     loop = asyncio.get_running_loop()
                     context_token = _reporter.set(lambda phase: loop.call_soon_threadsafe(self.progress, phase))
                     try:

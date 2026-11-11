@@ -36,8 +36,9 @@ class WebPPipelineTests(unittest.IsolatedAsyncioTestCase):
                 await pipeline.stop()
             metadata=json.loads((session.output/'parameters/photoId_00001.json').read_text())
             for variant in ('original','transparent'):
-                self.assertTrue(metadata['files'][variant].endswith('.webp'))
-                self.assertEqual(info((session.output/metadata['files'][variant]).read_bytes(),variant=='transparent'),(1,1))
+                path = session.output / variant / 'photoId_00001.webp'
+                self.assertTrue(path.is_file())
+                self.assertEqual(info(path.read_bytes(),variant=='transparent'),(1,1))
             session.close()
             session=Session(config,Path(tmp))
             self.assertEqual(session.counts()['done'],1)

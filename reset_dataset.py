@@ -8,7 +8,7 @@ from huggingface_hub.errors import RepositoryNotFoundError
 
 
 LOCAL_ENTRIES = {
-    'original', 'transparent', 'prompts', 'parameters', 'uploads', 'img', 'images',
+    'original', 'transparent', 'prompts', 'parameters', 'metadata', 'draft_prompts', 'uploads', 'img', 'images',
     'session.sqlite3', 'session.sqlite3-wal', 'session.sqlite3-shm', 'session.lock',
 }
 
@@ -48,7 +48,7 @@ def reset_dataset(config, config_dir, progress=print):
         if list(refs.tags) or any(branch.name != 'main' for branch in refs.branches):
             raise ValueError('Dataset has additional branches/tags; remove those data-retaining refs before resetting')
         card = Path(hf_hub_download(repo, 'README.md', repo_type='dataset', revision=head)).read_text(encoding='utf-8')
-        if 'live_upload_layout: ds-photo-id-v1' not in card:
+        if not any(f'live_upload_layout: ds-photo-id-v{version}' in card for version in (1, 2)):
             raise ValueError('Refusing to reset a repository without the portrait dataset marker')
         files = api.list_repo_files(repo, repo_type='dataset', revision=head)
         unexpected = [name for name in files if name not in ('README.md', '.gitattributes') and not name.startswith('data/')]
