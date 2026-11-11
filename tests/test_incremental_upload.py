@@ -117,6 +117,33 @@ class HubCommitTests(unittest.TestCase):
                 self.assertEqual(call.kwargs['parent_commit'],'head-sha')
                 self.assertEqual([op.path_in_repo for op in call.kwargs['operations']],['data/train/batch.parquet','README.md'])
 
+    def test_missing_dataset_is_created_before_reads_or_uploads(self):
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'batch.parquet';path.write_bytes(b'shard')
+            created=[]
+            with patch('huggingface_hub.HfApi') as factory:
+                api=factory.return_value
+                api.create_repo.side_effect=lambda *args,**kwargs:created.append(args[0])
+                def repo_info(*args,**kwargs):
+                    self.assertEqual(created,['lambdaWalker/ds.photo-id'])
+                    return SimpleNamespace(sha='new-repo-head')
+                api.repo_info.side_effect=repo_info
+                api.list_repo_files.return_value=[]
+                send_shard('lambdaWalker/ds.photo-id',True,path,'data/train/batch.parquet')
+                api.create_repo.assert_called_once_with('lambdaWalker/ds.photo-id',repo_type='dataset',private=True,exist_ok=True)
+                self.assertEqual(api.method_calls[0][0],'create_repo')
+                api.create_commit.assert_called_once()
+
+    def test_missing_login_explains_how_to_create_dataset(self):
+        from huggingface_hub.errors import LocalTokenNotFoundError
+        with patch('huggingface_hub.HfApi') as factory:
+            api=factory.return_value
+            api.create_repo.side_effect=LocalTokenNotFoundError('No saved login')
+            with self.assertRaisesRegex(RuntimeError,'hf auth login'):
+                send_shard('lambdaWalker/ds.photo-id',True,Path('unused'),'data/train/batch.parquet')
+            api.create_commit.assert_not_called()
+
     def test_refuses_older_dataset_layout(self):
         with tempfile.TemporaryDirectory() as tmp:
             path=Path(tmp)/'batch.parquet';path.write_bytes(b'shard')

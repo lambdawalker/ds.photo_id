@@ -50,7 +50,18 @@ def send_shard(repo_id, private, path, remote_path):
     from huggingface_hub.utils import disable_progress_bars
     disable_progress_bars()
     api = HfApi()
-    api.create_repo(repo_id, repo_type='dataset', private=private, exist_ok=True)
+    from huggingface_hub.errors import HfHubHTTPError, LocalTokenNotFoundError
+    try:
+        api.create_repo(repo_id, repo_type='dataset', private=private, exist_ok=True)
+    except LocalTokenNotFoundError as error:
+        raise RuntimeError('Sign in once with `uv run --locked hf auth login` to create the dataset') from error
+    except HfHubHTTPError as error:
+        if error.response is not None and error.response.status_code in (401, 403):
+            raise RuntimeError(
+                f'Cannot create/access dataset {repo_id}. Run `uv run --locked hf auth login` '
+                'with an account that has permission to create datasets in this namespace.'
+            ) from error
+        raise
     head = api.repo_info(repo_id, repo_type='dataset').sha
     files = api.list_repo_files(repo_id, repo_type='dataset', revision=head)
     operations = [CommitOperationAdd(path_in_repo=remote_path, path_or_fileobj=str(path))]
