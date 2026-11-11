@@ -25,3 +25,11 @@ web:
   enabled: true
   host: 127.0.0.1
   port: 8765
+
+huggingface:
+  enabled: true
+  repo_id: lambdaWalker/ds.photo_id-live
+  private: true
+  batch_size: 10
+  interval_seconds: 300
+  retry_seconds: 60

@@ -156,6 +156,32 @@ The sampler allocates the batch across individual ages by largest remainder and 
 | 85–94 | 2.32% | 233 |
 | 95+ | 0.29% | 28 |
 
+## Incremental Hugging Face uploads
+
+A third independent worker uploads completed records while prompts and images continue. The supplied configuration enables it for **`lambdaWalker/ds.photo_id-live`**, separate from the older full-export dataset. It creates a **private** dataset on its first successful upload. Set `huggingface.repo_id` to a dataset you can write, and set `private: false` before first creation if you want a public dataset. This setting does not change the visibility of an existing repository.
+
+Sign in once using the account that owns that dataset (or has write access):
+
+```bash
+uv run --locked hf auth login
+```
+
+Credentials use Hugging Face's saved login; no token is stored in YAML or the dataset. Then run the usual `run.bat` / `./run.sh` or browser-only mode. To disable uploads, set `huggingface.enabled: false`.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `batch_size` | 10 | Upload after this many complete records accumulate. |
+| `interval_seconds` | 300 | Upload a smaller batch after five minutes of pending data. |
+| `retry_seconds` | 60 | Retry failed uploads after one minute. |
+
+Each row contains `id`, `image`, `image_transparent`, `prompt`, and `parameters` (JSON text). Both PNG/WebP image byte streams are embedded in Parquet; loading the dataset does not depend on your local paths. Row IDs combine a durable session UUID and the portrait stem so separate sessions do not collide.
+
+Only records with both images and saved parameters are eligible. New immutable shards are committed under `data/train/`. SQLite tracks batch membership, remote filenames and acknowledgements; interrupted uploads retry the same staged bytes at the same remote path. Keep `session.sqlite3` and the `uploads/` staging folder with the dataset until pending uploads succeed. Successful staging files are removed locally, while original images and metadata remain. Reopening a session catches up with existing completed records without duplicating acknowledged batches. Remote history deletion or manually removing uploaded shards is not automatically repaired.
+
+The dashboards show uploaded and pending counts, worker status and errors; detailed upload events appear in the image log. Network/login failures never pause image generation. Pause prevents starting another upload; an active upload finishes. Save & exit drains generation and then tries to upload all remaining records, including a partial final batch. If that attempt fails, data stays queued for the next run. Upload requests can extend shutdown time. The Hub dataset viewer may refresh later than the commit itself.
+
+Use a dedicated empty repository or one created by this uploader. It refuses to mix shards into an older dataset layout. Existing dataset cards are preserved; first-time setup adds a card describing the `train` split. Do not run the older full-export command against the incremental repository, since its export layout is different. The uploader itself never changes or deletes existing remote shards.
+
 ## Publish to Hugging Face
 
 The publisher uses the optional `publish` dependencies. It skips records whose transparent version or nonempty prompt is missing. The `body` split contains both images and their shared prompt.

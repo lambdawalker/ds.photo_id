@@ -40,6 +40,7 @@ class GenerationApp(App):
     ProgressBar { width: 1fr; height: 1; }
     ProgressBar > Bar { width: 1fr; }
     RichLog { height: 1fr; min-height: 3; background: #14212b; border-top: solid #39556a; }
+    #upload-status { height: 1; padding: 0 1; color: #9baebc; }
     #controls { height: 3; align-horizontal: center; padding: 0; }
     Button { margin: 0 1; }
     Footer { background: #1b2b38; }
@@ -86,6 +87,7 @@ class GenerationApp(App):
                     yield Static('Waiting', id=f'{stage}-current', classes='current', markup=False)
                     yield Static('ETA: measuring…', id=f'{stage}-timing', classes='timing', markup=False)
                     yield RichLog(id=f'{stage}-log', wrap=True, min_width=1, max_lines=2000, markup=False)
+        yield Static('Hugging Face: disabled', id='upload-status', markup=False)
         with Horizontal(id='controls'):
             yield Button('Pause', id='pause', variant='warning', disabled=True)
             yield Button('Retry failures', id='retry', disabled=True)
@@ -134,6 +136,10 @@ class GenerationApp(App):
     def refresh_progress(self):
         if not self.pipeline:
             return
+        upload = self.pipeline.upload_snapshot()
+        self.query_one('#upload-status', Static).update(
+            f"HF: {upload['uploaded']:,} uploaded · {upload['pending']:,} pending · {upload['status']}"
+            + (f" · {upload['error']}" if upload['error'] else ''))
         counts = self.session.counts()
         total = self.config['generation']['samples']
         prompts = self.session.db.execute('SELECT COUNT(*) FROM jobs WHERE prompt IS NOT NULL').fetchone()[0]

@@ -262,6 +262,8 @@ class Pipeline:
         self.running = {}
         self.cleanup_changed = asyncio.Event()
         self.work_remaining = {'llm': None, 'image': None}
+        self.uploader = None
+        self.upload_error = None
 
     async def timed(self, stage, function, *args, learn=True):
         self.running[stage] = time.monotonic()
@@ -287,6 +289,14 @@ class Pipeline:
         return prompt_eta, image_eta, averages
 
     def start(self):
+        if self.session.config.get('huggingface', {}).get('enabled', False):
+            try:
+                from incremental_upload import LiveUploader
+                self.uploader = LiveUploader(self)
+                self.uploader.start()
+            except Exception as error:
+                self.upload_error = str(error)
+                self.notify('image', f'Hugging Face configuration error: {error}')
         self.tasks = [asyncio.create_task(self._worker('llm')), asyncio.create_task(self._worker('image'))]
         if self.session.config.get('comfyui', {}).get('cleanup', {}).get('enabled', False):
             self.tasks.append(asyncio.create_task(self._cleanup_worker()))
@@ -308,6 +318,16 @@ class Pipeline:
         self.cleanup_changed.set()
         self.changed.set()
         await asyncio.gather(*self.tasks)
+        if self.uploader:
+            await self.uploader.stop()
+
+    def upload_snapshot(self):
+        if self.uploader:
+            return self.uploader.snapshot()
+        enabled = self.session.config.get('huggingface', {}).get('enabled', False)
+        return {'enabled': enabled, 'status': 'error' if self.upload_error else 'disabled',
+                'error': self.upload_error, 'uploaded': 0, 'pending': 0,
+                'repo_id': self.session.config.get('huggingface', {}).get('repo_id')}
 
     async def _cleanup_worker(self):
         config = self.session.config['comfyui']['cleanup']
@@ -437,6 +457,8 @@ class Pipeline:
                 session.record_time('background', time.monotonic() - phase_start)
             self.running.pop('background', None)
         session.update(job['id'], state='done', error=None)
+        if self.uploader:
+            self.uploader.changed.set()
         if session.config.get('comfyui', {}).get('cleanup', {}).get('enabled', False):
             session.queue_cleanup(job['id'])
             self.cleanup_changed.set()
