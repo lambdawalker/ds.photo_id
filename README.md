@@ -265,3 +265,30 @@ Existing sessions retain their sampled drafts and metadata; start a fresh output
 session to use this expanded sampler. Resuming does not resample saved subjects or
 regenerate completed portraits. No clinical condition or body measurement is inferred
 from generated images. Review outputs for prompt adherence and image artifacts.
+
+## Reset local and Hugging Face data
+
+Stop all generator sessions, including sessions on other machines, and update to the
+latest code. To delete all generated data in the configured output directory and
+`huggingface.repo_id`, run:
+
+```powershell
+.\run.bat --reset-data
+```
+
+```sh
+./run.sh --reset-data
+```
+
+Use `--config path/to/config.yaml` for another configuration. The command uses your
+existing Hugging Face login. It deletes remote `data/` files and squashes the dataset's
+main history, retaining `README.md` and `.gitattributes`. Additional remote branches/tags
+and unexpected files cause it to stop. It then deletes local images, prompts, parameters,
+queued upload shards and SQLite session state. The generator lock prevents resetting
+an active local session. If the remote operation fails, local records remain; if a
+partial reset fails, leave generation stopped and run the command again.
+
+This does not clear ComfyUI server input/output folders, Hugging Face client caches,
+or copies downloaded by other users. The Hub viewer may take time to refresh.
+Run normally after a successful reset to sample a fresh session with the latest prompt
+rules. Resetting is destructive and has no undo.
