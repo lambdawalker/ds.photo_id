@@ -115,7 +115,8 @@ class Session:
         with self.db:
             for i, age in enumerate(generate_ages(settings['samples'], seed=settings['seed']), 1):
                 prompt_seed, image_seed = rng.getrandbits(64), rng.getrandbits(53)
-                draft, required, sample = prepare_prompt(age, prompt_seed, template, include_data=True)
+                draft, required, sample = prepare_prompt(age, prompt_seed, template, include_data=True,
+                    diversity=self.config["generation"].get("diversity"))
                 metadata = {'sample': sample, 'prompt_seed': prompt_seed, 'batch': settings,
                             'provenance': 'captured_at_sampling'}
                 if any((self.output / 'original' / f'photoId_{i:05d}.{ext}').is_file() for ext in ('png','webp')):
@@ -385,6 +386,7 @@ class Pipeline:
                         'model': session.config['llm'].get('model'),
                         'api': session.config['llm'].get('api', 'openai'),
                         'temperature': 0.1, 'thinking': False,
+                        'max_output_tokens': session.config['llm'].get('max_output_tokens', 4096),
                         'result': 'template' if result == job['draft'] else 'rewritten'})
                     self.notify(stage, f'{job["stem"]} → ready queue')
                 else:

@@ -7,13 +7,30 @@ llm:
   url: http://127.0.0.1:1234/v1
   api: lmstudio
   model: google/gemma-4-12b-qat
-  timeout_seconds: 20
+  timeout_seconds: 60
+  max_output_tokens: 4096
 
 generation:
   samples: 10000
   seed: 42
   output_dir: dataset/idPhoto
   prompt_queue_size: null
+  diversity:
+    # Synthetic coverage targets, not medical prevalence estimates.
+    glasses_probability: 0.05
+    blindness_probability: 0.05
+    facial_conditions:
+      cleft_lip: 0.01
+      down_syndrome: 0.01
+      vitiligo: 0.01
+      alopecia: 0.01
+      facial_palsy: 0.005
+      craniofacial_microsomia: 0.005
+    cataracts_by_age:
+      "18_39": 0.002
+      "40_59": 0.01
+      "60_74": 0.04
+      75_plus: 0.08
   retries:
     enabled: true
     max_retries: 3

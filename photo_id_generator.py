@@ -31,13 +31,13 @@ FRAMING = (
     "Keep the entire head and chin inside the frame. Show the neck and upper shoulders "
     "at the bottom edge; the shoulders extend beyond the left and right edges. "
     "Only the neckline and uppermost part of the clothing are visible. "
-    "Head generally facing the camera with only subtle pose variation, face fully visible, "
+    "Head vertical and straight-on, horizontal eye line, level shoulders, no sideways head lean. Face fully visible, "
     "plain light-gray background, even soft lighting."
 )
 NEGATIVE_PROMPT = (
     "3d render, illustration, full body, mid-body shot, waist-up shot, half-length portrait, "
     "fashion editorial, wide shot, distant subject, small head, visible waist, visible hands, "
-    "cropped crown, cropped chin"
+    "cropped crown, cropped chin, sideways head lean, tilted head, diagonal eye line, dutch angle"
 )
 
 
@@ -70,10 +70,13 @@ def finalize_prompt(draft, required_phrases, llm):
     if not llm["enabled"]:
         return draft
 
+    token_budget = llm.get("max_output_tokens", 4096)
+    if isinstance(token_budget, bool) or not isinstance(token_budget, int) or token_budget < 1:
+        raise ValueError("llm.max_output_tokens must be a positive integer")
     payload = {
         "model": llm["model"],
         "temperature": 0.1,
-        "max_tokens": 1024,
+        "max_tokens": token_budget,
         "messages": [
             {
                 "role": "system",
@@ -115,9 +118,11 @@ def finalize_prompt(draft, required_phrases, llm):
             response = request_json(
                 f"{llm['url'].rstrip('/')}/chat/completions", llm["timeout_seconds"], payload
             )
+            if response["choices"][0].get("finish_reason") == "length":
+                raise ValueError("LLM output reached its token limit; using complete template")
             candidate = response["choices"][0]["message"]["content"].strip()
         normalized = " ".join(candidate.casefold().split())
-        if not candidate or len(candidate.split()) > 260 or "\n" in candidate or "<think>" in normalized:
+        if not candidate or len(candidate.split()) > max(512, len(draft.split()) + 128) or "\n" in candidate or "<think>" in normalized:
             raise ValueError("expected one short portrait paragraph")
         if any(phrase.casefold() not in normalized for phrase in required_phrases):
             raise ValueError("rewrite omitted a required trait")
@@ -129,9 +134,9 @@ def finalize_prompt(draft, required_phrases, llm):
         return draft
 
 
-def prepare_prompt(age, prompt_seed, template, include_data=False):
+def prepare_prompt(age, prompt_seed, template, include_data=False, diversity=None):
     random.seed(prompt_seed)
-    data = generate_sample_data(age)
+    data = generate_sample_data(age, diversity=diversity)
     draft = " ".join(template.render(**data).split())
     required = [
         f"{age} years old", data["gender"], data["skin"]["tone"], data["face"]["shape"],
@@ -142,6 +147,8 @@ def prepare_prompt(age, prompt_seed, template, include_data=False):
         data["eyes"]["shape"], data["eyes"]["eyelids"], data["eyes"]["spacing"],
     ]
     required.extend(phrase for phrase in (
+        data["ancestry"], data["facial_condition"]["description"],
+        data["eyes"]["cataracts"]["description"], data["metadata"]["eyewear_instruction"],
         data["metadata"]["expression"], data["build"]["description"],
         data["skin"]["birthmark"]["description"], data["eyes"]["vision"]["description"],
     ) if phrase)
@@ -168,6 +175,8 @@ def build_image_graph(workflow, prompt, seed, stem):
     graph = copy.deepcopy(workflow)
     graph["452"]["inputs"]["prompt"] = prompt
     graph["452"]["inputs"]["negative_prompt"] = NEGATIVE_PROMPT
+    if "no eyeglasses or sunglasses; eyes unobstructed" in prompt.casefold():
+        graph["452"]["inputs"]["negative_prompt"] += ", eyeglasses, sunglasses, spectacle frames"
     graph["458"]["inputs"]["seed"] = seed
     graph["461"]["inputs"]["filename_prefix"] = f"photo_id/{stem}_{uuid.uuid4().hex}"
 

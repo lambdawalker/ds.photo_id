@@ -248,15 +248,15 @@ one opaque eye, or opacity in both eyes. Blindness does not imply a particular v
 appearance; these inputs are not diagnoses or labels verified from images. Eye color
 is omitted from the prompt when visible opacity is requested, and fixed framing does
 not require eye contact. These probabilities prioritize coverage, not prevalence.
-Adjust `BIRTHMARK_PROBABILITY` in `id_data/skin.py` and `BLINDNESS_PROBABILITY`
-in `id_data/eyes.py` to change them.
+Adjust `BIRTHMARK_PROBABILITY` in `id_data/skin.py` for birthmarks; the other
+coverage rates are configured in `generation.diversity` in YAML.
 
 Previously omitted visual inputs now reach the prompt and its required-phrase checks:
 stray hairs, jewelry, piercings/tattoos, makeup, grooming, head tilt/yaw, shoulders,
 lens, lighting, image quality, slight motion softness, clothing condition and both
-sampled head coverings. The LLM output budget is 1,024 tokens for the longer description;
-failed or incomplete rewrites still fall back to the complete template. Ancestry remains
-sampled context rather than a visual instruction. Clothing style/palette labels and
+sampled head coverings. The default LLM output budget is 4,096 tokens for the longer description;
+failed or incomplete rewrites still fall back to the complete template. The sampled race/ethnicity or ancestry label is included in the prompt and
+required phrases, alongside independently sampled skin tone and facial details. Clothing style/palette labels and
 component fields are represented through their actual garment descriptions.
 
 All new inputs are retained in the existing structured `sample` metadata, including
@@ -292,3 +292,90 @@ This does not clear ComfyUI server input/output folders, Hugging Face client cac
 or copies downloaded by other users. The Hub viewer may take time to refresh.
 Run normally after a successful reset to sample a fresh session with the latest prompt
 rules. Resetting is destructive and has no undo.
+
+## Level pose, eyewear and facial-condition coverage
+
+The previous pose list selected a slight head tilt 75% of the time, without a direction.
+It did not explicitly favor left, but left/right choice was left to the model. New prompts
+request a vertical head axis, horizontal eye line, straight-on pose and level shoulders;
+negative conditioning rejects sideways leaning and camera roll. This removes the prompt
+bias toward tilt; it does not measure or automatically correct generated head angles.
+Existing saved prompts remain unchanged. Use a fresh/reset session to get these changes.
+
+Glasses previously had an 18% sampling probability. They now use
+`generation.diversity.glasses_probability: 0.05`. Other portraits explicitly request
+`no eyeglasses or sunglasses; eyes unobstructed`, preserved by LLM validation and used
+to add eyewear to negative conditioning. Requested glasses are never negatively conditioned.
+Only 10% of requested glasses receive faint reflection instructions.
+
+### Coverage targets for a 10,000-portrait batch
+
+| Intended synthetic profile | Probability | Expected portraits |
+| --- | ---: | ---: |
+| Cleft lip | 1% | 100 |
+| Down syndrome | 1% | 100 |
+| Vitiligo | 1% | 100 |
+| Alopecia affecting visible scalp/eyebrows | 1% | 100 |
+| Residual facial palsy | 0.5% | 50 |
+| Craniofacial microsomia | 0.5% | 50 |
+| None of these additional profiles | 95% | 9,500 |
+
+These are design choices for coverage, not medically established dataset proportions.
+Real-world prevalence sampling would leave too few examples of some conditions for
+useful visual testing in a batch this size. CDC's cleft-lip and Down-syndrome birth
+statistics are not an adult prevalence model. Counts vary because these are probabilities,
+not exact quotas. One of the six facial profiles is sampled at most once per subject;
+this is not a model of real-world comorbidity. Profiles are sampled independently of
+race/ethnicity, gender and build. They are intended inputs, not verified clinical labels.
+
+Cleft-lip profiles use 70% repaired unilateral, 20% repaired bilateral and 10% unrepaired
+unilateral variants as coverage choices, with left/right sides balanced where relevant.
+Generic lip, nose, hair or jaw descriptions are replaced where necessary to avoid
+contradicting a selected profile. Condition appearance varies, so the generator does
+not require every possible feature of a syndrome or infer a diagnosis from an image.
+
+Cataracts are separate from blindness and the six facial profiles:
+
+| Prompt age | Cataract sampling probability |
+| --- | ---: |
+| 18–39 | 0.2% |
+| 40–59 | 1% |
+| 60–74 | 4% |
+| 75+ | 8% |
+
+These coverage weights give roughly 2% overall with the supplied age distribution,
+not the real-world cataract prevalence. Half of cataract profiles request no obvious
+external change; 30% request visible advanced lens clouding in one pupil and 20% in
+both. Visible clouding is described behind the pupil with the colored iris retained,
+not as a uniformly white eye. Cataracts do not automatically assign blindness.
+
+The existing broad ancestry labels now reach the prompt, including separate East,
+South and Southeast Asian categories and Pacific Islander ancestry. The same sampled
+label is saved as `sample.race_ethnicity` and `sample.ancestry` for compatibility.
+These categories mix race, ethnicity and ancestry; Hispanic identity is not treated
+as a biological race. Labels are synthetic author inputs, not image-derived identities,
+and the independent appearance sampling is intended for diversity, not demographic fidelity.
+
+Configuration is in `generation.diversity`; resolved rates are saved in
+`sample.diversity_settings`. Selected condition and cataract profiles are saved in
+`sample.facial_condition` and `sample.eyes.cataracts`. Sampling/metadata tests cannot
+establish visual or medical fidelity: inspect generated images before using their labels.
+
+Reference descriptions:
+- [CDC: cleft lip and palate](https://www.cdc.gov/birth-defects/about/cleft-lip-cleft-palate.html).
+- [CDC: Down syndrome](https://www.cdc.gov/birth-defects/about/down-syndrome.html).
+- [NEI: cataracts](https://www.nei.nih.gov/eye-health-information/eye-conditions-and-diseases/cataracts).
+- [NIAMS: vitiligo](https://www.niams.nih.gov/health-topics/vitiligo) and [alopecia areata](https://www.niams.nih.gov/health-topics/alopecia-areata).
+- [NIH: facial palsy](https://health.nih.gov/health-topics-a-z/bellspalsy) and [craniofacial microsomia](https://medlineplus.gov/genetics/condition/craniofacial-microsomia/).
+
+### LLM output budget
+
+Set `llm.max_output_tokens` (default `4096`) to control the output budget sent as
+`max_output_tokens` to LM Studio or `max_tokens` to OpenAI-compatible endpoints.
+Thinking remains disabled. The supplied request timeout is now 60 seconds.
+The old 260-word rewrite limit is replaced by a draft-aware allowance of at least
+512 words, so preserving the longer template does not trigger an unnecessary fallback.
+OpenAI-compatible responses with `finish_reason: length` fall back to the full saved
+template. Required trait and numeric-value validation still apply. The requested token
+budget is saved with prompt-finalization metadata. A server's configured context or
+output limit can still cap the response below the requested budget.

@@ -4,7 +4,10 @@ DESCENTS = [
     "African descent",
     "European descent",
     "Hispanic descent",
-    "Asian descent",
+    "East Asian descent",
+    "South Asian descent",
+    "Southeast Asian descent",
+    "Pacific Islander ancestry",
     "Middle Eastern descent",
     "Indigenous descent",
     "Mixed ancestry"

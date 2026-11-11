@@ -1,5 +1,7 @@
 import random
 
+from .diversity import settings
+
 GENDERS = ["woman", "man"]
 
 EXPRESSIONS = [
@@ -40,9 +42,9 @@ QUALITY_PROFILES = [
 
 GLASSES_STYLES = ["thin metal-frame glasses", "classic rectangular glasses", "round acetate frames", "subtle rimless glasses"]
 
-HEAD_TILT = ["perfectly level head", "slight head tilt (~2°)", "slight head tilt (~3°)", "very subtle head tilt (~1°)"]
-HEAD_YAW = ["straight-on", "almost straight-on (micro yaw ~2°)", "slight yaw (~3°)"]
-SHOULDERS = ["square shoulders", "slightly relaxed shoulders", "very subtle shoulder angle"]
+HEAD_TILT = ["perfectly level head with vertical head axis and horizontal eye line"]
+HEAD_YAW = ["straight-on with nose centered between the ears"]
+SHOULDERS = ["level shoulders facing the camera"]
 
 GROOMING_STYLES = ["neat and well-groomed", "relaxed and natural", "sleek and professional", "slightly tousled for a modern look", "clean and understated"]
 MAKEUP = ["natural makeup", "soft professional makeup", "no makeup"]
@@ -51,14 +53,15 @@ HATS_MEN = ["a classic fitted baseball cap", "a wool flat cap", "a minimalist be
 HATS_WOMEN = ["a wide-brim felt hat", "a chic beret", "a minimalist beanie", "a structured fedora with a slim band", "a stylish bucket hat", "a small brim cloche-inspired hat"]
 
 
-def get_metadata(gender):
+def get_metadata(gender, diversity=None):
+    diversity = settings(diversity)
     lens = random.choice(["50mm", "50mm", "85mm", "35mm"])
     has_motion_hint = random.randint(1, 100) <= 2
     motion_hint = "a barely perceptible motion softness" if has_motion_hint else ""
 
-    wears_glasses = random.randint(1, 100) <= 18
+    wears_glasses = random.random() < diversity["glasses_probability"]
     glasses_desc = random.choice(GLASSES_STYLES) if wears_glasses else ""
-    glare_desc = "with a faint lens reflection/glare" if wears_glasses and random.randint(1, 100) <= 25 else ""
+    glare_desc = "with a faint lens reflection/glare" if wears_glasses and random.randint(1, 100) <= 10 else ""
 
     extra_headwear = ""
     if random.randint(1, 400) == 1:
@@ -87,6 +90,7 @@ def get_metadata(gender):
         "shoulders": random.choice(SHOULDERS),
         "grooming": random.choice(GROOMING_STYLES),
         "makeup": random.choice(MAKEUP),
+        "eyewear_instruction": "" if wears_glasses else "no eyeglasses or sunglasses; eyes unobstructed",
         "glasses": glasses_desc,
         "glare": glare_desc,
         "extra_headwear": extra_headwear,
