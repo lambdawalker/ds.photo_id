@@ -14,6 +14,11 @@ generation:
   seed: 42
   output_dir: dataset/idPhoto
   prompt_queue_size: null
+  retries:
+    enabled: true
+    max_retries: 3
+    initial_delay_seconds: 10
+    max_delay_seconds: 120
   image_storage:
     format: webp
     quality: 90

@@ -1,6 +1,7 @@
 """Durable producer/consumer queue. SQLite is owned by the asyncio event loop."""
 import asyncio
 import json
+import math
 import random
 import sqlite3
 import time
@@ -11,6 +12,7 @@ from filelock import FileLock
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from id_data import generate_ages
+from retry_policy import RetryPolicy
 from file_storage import atomic_write
 from image_storage import settings as storage_settings, encode, info as image_info
 from processing_estimates import estimate, active_work, rolling_averages
@@ -24,6 +26,7 @@ class Session:
     def __init__(self, config, config_dir):
         self.config = config
         generation = config['generation']
+        self.retry_policy = RetryPolicy.from_config(generation.get('retries', {}))
         self.storage = storage_settings(generation.get('image_storage', {}))
         self.capacity = generation.get('prompt_queue_size')
         if self.capacity is not None and (not isinstance(self.capacity, int) or self.capacity < 1):
@@ -57,6 +60,9 @@ class Session:
                 for name in ('background_id', 'background_url', 'parameters'):
                     if name not in columns:
                         self.db.execute(f'ALTER TABLE jobs ADD COLUMN {name} TEXT')
+                for name, definition in (('retry_count','INTEGER NOT NULL DEFAULT 0'), ('retry_at','REAL'), ('failure_stage','TEXT')):
+                    if name not in columns:
+                        self.db.execute(f'ALTER TABLE jobs ADD COLUMN {name} {definition}')
             self._migrate_layout()
             for name in ('original', 'transparent', 'prompts', 'parameters'):
                 (self.output / name).mkdir(parents=True, exist_ok=True)
@@ -78,6 +84,13 @@ class Session:
                 self.db.execute("UPDATE jobs SET state='pending' WHERE state='prompting'")
                 self.db.execute("UPDATE jobs SET state='ready' WHERE state='rendering'")
             self._reconcile_files()
+            if self.retry_policy.enabled:
+                for row in self.db.execute("SELECT * FROM jobs WHERE state='failed' AND retry_at IS NULL").fetchall():
+                    count = max(1, row['retry_count'])
+                    delay = self.retry_policy.delay(count)
+                    if delay is not None:
+                        self.update(row['id'], retry_count=count, retry_at=time.time()+delay,
+                                    failure_stage=row['failure_stage'] or ('llm' if row['prompt'] is None else 'image'))
             self.originals = {path.stem for path in (self.output / "original").iterdir() if path.suffix in (".png", ".webp")}
             # Refresh only unsubmitted prompts without an existing original. In-flight
             # jobs keep the exact prompt that produced their remote image.
@@ -175,7 +188,7 @@ class Session:
         return self.image_path('transparent', job['stem'])
 
     def update(self, job_id, **values):
-        allowed = {'prompt', 'state', 'remote_id', 'remote_url', 'background_id', 'background_url', 'error', 'parameters'}
+        allowed = {'prompt', 'state', 'remote_id', 'remote_url', 'background_id', 'background_url', 'error', 'parameters', 'retry_count', 'retry_at', 'failure_stage'}
         if not values or not values.keys() <= allowed:
             raise ValueError('Invalid job update')
         with self.db:
@@ -192,7 +205,23 @@ class Session:
         with self.db:
             if resubmit:
                 self.db.execute("UPDATE jobs SET remote_id=NULL, remote_url=NULL, background_id=NULL, background_url=NULL WHERE state='failed'")
-            self.db.execute("UPDATE jobs SET state=CASE WHEN prompt IS NULL THEN 'pending' ELSE 'ready' END, error=NULL WHERE state='failed'")
+            self.db.execute("UPDATE jobs SET state=CASE WHEN prompt IS NULL THEN 'pending' ELSE 'ready' END, error=NULL, retry_count=0, retry_at=NULL, failure_stage=NULL WHERE state='failed'")
+
+    def due_retry(self, stage):
+        if not self.retry_policy.enabled:
+            return None
+        return self.db.execute("SELECT * FROM jobs WHERE state='failed' AND failure_stage=? "
+                               'AND retry_at IS NOT NULL AND retry_at<=? ORDER BY retry_at,id LIMIT 1',
+                               (stage, time.time())).fetchone()
+
+    def retry_snapshot(self, stage=None):
+        rows = self.db.execute("SELECT retry_at FROM jobs WHERE state='failed'"
+                               + (" AND COALESCE(failure_stage,CASE WHEN prompt IS NULL THEN 'llm' ELSE 'image' END)=?" if stage else ""), (stage,) if stage else ()).fetchall()
+        if not self.retry_policy.enabled:
+            return {'scheduled': 0, 'exhausted': len(rows), 'next_in_seconds': None}
+        deadlines = [row['retry_at'] for row in rows if row['retry_at'] is not None]
+        return {'scheduled': len(deadlines), 'exhausted': len(rows)-len(deadlines),
+                'next_in_seconds': max(0, math.ceil(min(deadlines)-time.time())) if deadlines else None}
 
     def capture_parameters(self, job_id, **values):
         row = self.db.execute('SELECT parameters FROM jobs WHERE id=?', (job_id,)).fetchone()
@@ -248,6 +277,10 @@ class Pipeline:
         self.work_remaining = {'llm': None, 'image': None}
         self.uploader = None
         self.upload_error = None
+        self.cooldown = {'llm': 0, 'image': 0}
+        for row in self.session.db.execute("SELECT failure_stage,MIN(retry_at) AS deadline FROM jobs WHERE state='failed' AND retry_at IS NOT NULL GROUP BY failure_stage"):
+            if row['failure_stage'] in self.cooldown:
+                self.cooldown[row['failure_stage']] = row['deadline']
 
     async def timed(self, stage, function, *args, learn=True):
         self.running[stage] = time.monotonic()
@@ -293,6 +326,7 @@ class Pipeline:
 
     def retry(self, resubmit=False):
         self.session.retry(resubmit=resubmit)
+        self.cooldown = {'llm': 0, 'image': 0}
         self.changed.set()
 
     async def stop(self):
@@ -301,6 +335,12 @@ class Pipeline:
         await asyncio.gather(*self.tasks)
         if self.uploader:
             await self.uploader.stop()
+
+    def retry_snapshot(self, stage):
+        result = self.session.retry_snapshot(stage)
+        if result['scheduled']:
+            result['next_in_seconds'] = max(result['next_in_seconds'], math.ceil(self.cooldown[stage]-time.time()), 0)
+        return result
 
     def upload_snapshot(self):
         if self.uploader:
@@ -317,11 +357,21 @@ class Pipeline:
             self.changed.clear()
             counts = session.counts()
             full = session.capacity is not None and counts.get('ready', 0) >= session.capacity
-            job = None if self.paused or (stage == 'llm' and full) else session.next('pending' if stage == 'llm' else 'ready')
+            waiting = self.cooldown[stage] > time.time()
+            job = None
+            if not self.paused and not waiting and not (stage == 'llm' and full):
+                job = session.due_retry(stage)
+                if job is None:
+                    job = session.next('pending' if stage == 'llm' else 'ready')
             if job is None:
-                await self.changed.wait()
+                try:
+                    await asyncio.wait_for(self.changed.wait(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    pass
                 continue
-            session.update(job['id'], state='prompting' if stage == 'llm' else 'rendering')
+            if job['state'] == 'failed':
+                self.notify(stage, f'Automatic retry {job["retry_count"]}/{session.retry_policy.max_retries}: {job["stem"]}')
+            session.update(job['id'], state='prompting' if stage == 'llm' else 'rendering', retry_at=None)
             self.active[stage] = job['stem']
             self.notify(stage, f'Starting {job["stem"]}')
             try:
@@ -329,7 +379,7 @@ class Pipeline:
                     result = await self.timed('llm', finalize_prompt, job['draft'], json.loads(job['required']), session.config['llm'])
                     prompt = compose_prompt(result)
                     self._save(session.paths(job)[1], prompt.encode('utf-8'))
-                    session.update(job['id'], prompt=prompt, state='ready', error=None)
+                    session.update(job['id'], prompt=prompt, state='ready', error=None, retry_count=0, retry_at=None, failure_stage=None)
                     session.capture_parameters(job['id'], prompt_finalization={
                         'enabled': session.config['llm']['enabled'],
                         'model': session.config['llm'].get('model'),
@@ -344,10 +394,19 @@ class Pipeline:
                 values = {'state': 'failed', 'error': str(error)}
                 if isinstance(error, ComfyGenerationError):
                     values.update(remote_id=None, remote_url=None, background_id=None, background_url=None)
+                count = job['retry_count'] + 1
+                delay = session.retry_policy.delay(count)
+                deadline = time.time()+delay if delay is not None else None
+                values.update(retry_count=count, retry_at=deadline, failure_stage=stage)
                 session.update(job['id'], **values)
                 self.notify(stage, f'{job["stem"]}: {error}')
-                # Stop dispatching after a service failure instead of failing the entire batch.
-                self.paused = True
+                if delay is not None:
+                    self.cooldown[stage] = deadline
+                    self.notify(stage, f'{job["stem"]}: retry {count}/{session.retry_policy.max_retries} in {delay:g}s')
+                elif session.retry_policy.enabled:
+                    self.notify(stage, f'{job["stem"]}: automatic retries exhausted; manual retry is available')
+                else:
+                    self.paused = True
             finally:
                 if stage == 'image':
                     self.running.pop('original', None)
@@ -402,7 +461,7 @@ class Pipeline:
             if not job['background_id']:
                 session.record_time('background', time.monotonic() - phase_start)
             self.running.pop('background', None)
-        session.update(job['id'], state='done', error=None)
+        session.update(job['id'], state='done', error=None, retry_count=0, retry_at=None, failure_stage=None)
         if self.uploader:
             self.uploader.changed.set()
 

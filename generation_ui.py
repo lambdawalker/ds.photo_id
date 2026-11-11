@@ -152,6 +152,7 @@ class GenerationApp(App):
         prompts = self.session.db.execute('SELECT COUNT(*) FROM jobs WHERE prompt IS NOT NULL').fetchone()[0]
         done, ready, failed = (counts.get(key, 0) for key in ('done', 'ready', 'failed'))
         llm_failed = self.session.db.execute("SELECT COUNT(*) FROM jobs WHERE state='failed' AND prompt IS NULL").fetchone()[0]
+        retries = self.pipeline.retry_snapshot('image')
         active = any(self.pipeline.active.values())
         if self.closing:
             status = ('Saving — draining Hugging Face uploads…' if not active and upload['enabled'] and upload['pending']
@@ -166,12 +167,15 @@ class GenerationApp(App):
         self.query_one('#summary', Static).update(status)
         capacity_label = str(self.session.capacity) if self.session.capacity is not None else 'unlimited'
         self.query_one('#llm-metrics', Static).update(f'{prompts:,} / {total:,} prompts prepared\nReady queue: {ready:,} / {capacity_label} · Failures: {llm_failed:,}')
-        self.query_one('#image-metrics', Static).update(f'{done:,} / {total:,} portraits complete (both images)\nFailures: {failed - llm_failed:,} · In flight: {int(bool(self.pipeline.active["image"]))}')
+        self.query_one('#image-metrics', Static).update(f'{done:,} / {total:,} portraits complete (both images)\nFailures: {failed - llm_failed:,} · Auto: {retries["scheduled"]} · Manual: {retries["exhausted"]}')
         self.query_one('#llm-progress', ProgressBar).update(progress=prompts)
         self.query_one('#image-progress', ProgressBar).update(progress=done)
         for stage in ('llm', 'image'):
             current = self.pipeline.active[stage]
             idle = 'Paused' if self.pipeline.paused else ('Complete' if (prompts if stage == 'llm' else done) == total else ('Waiting for queue space' if stage == 'llm' and self.session.capacity is not None and ready >= self.session.capacity else 'Waiting for work'))
+            retry_info = self.pipeline.retry_snapshot(stage)
+            if not current and not self.pipeline.paused and retry_info['scheduled']:
+                idle = f"Retry in {retry_info['next_in_seconds']}s ({retry_info['scheduled']} waiting)"
             self.query_one(f'#{stage}-current', Static).update(f'Working: {current}' if current else idle)
         if self.eta_cache is None or time.monotonic() - self.eta_updated >= 1:
             self.eta_cache = self.pipeline.estimates()

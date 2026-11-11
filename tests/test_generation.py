@@ -24,7 +24,7 @@ def png_fixture():
 
 PNG = png_fixture()
 CONFIG = {
-    'generation': {'samples': 5, 'seed': 42, 'output_dir': 'output', 'prompt_queue_size': 2},
+    'generation': {'samples': 5, 'seed': 42, 'output_dir': 'output', 'prompt_queue_size': 2, 'retries': {'enabled': False}},
     'llm': {'enabled': False, 'url': 'http://llm.test/v1'},
     'comfyui': {'url': 'http://comfy.test', 'timeout_seconds': 1},
 }
