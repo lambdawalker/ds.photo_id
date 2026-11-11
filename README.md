@@ -158,7 +158,7 @@ The sampler allocates the batch across individual ages by largest remainder and 
 
 ## Incremental Hugging Face uploads
 
-A third independent worker uploads completed records while prompts and images continue. The supplied configuration enables it for **`lambdaWalker/ds.photo_id-live`**, separate from the older full-export dataset. It creates a **private** dataset on its first successful upload. Set `huggingface.repo_id` to a dataset you can write, and set `private: false` before first creation if you want a public dataset. This setting does not change the visibility of an existing repository.
+A third independent worker uploads completed records while prompts and images continue. The supplied configuration enables it for **`lambdaWalker/ds.photo-id`**, separate from the older full-export dataset. It creates a **private** dataset on its first successful upload. Set `huggingface.repo_id` to a dataset you can write, and set `private: false` before first creation if you want a public dataset. This setting does not change the visibility of an existing repository.
 
 Sign in once using the account that owns that dataset (or has write access):
 

@@ -28,7 +28,7 @@ web:
 
 huggingface:
   enabled: true
-  repo_id: lambdaWalker/ds.photo_id-live
+  repo_id: lambdaWalker/ds.photo-id
   private: true
   batch_size: 10
   interval_seconds: 300
